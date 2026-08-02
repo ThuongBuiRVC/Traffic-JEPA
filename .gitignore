@@ -1,0 +1,20 @@
+# data (WTS dataset — provided by user, not shipped)
+data/
+# produced artifacts / regeneratable
+runs/
+clean_run/
+submissions/verify_*
+submissions/submission_raw*
+submissions/*_decoded.jsonl
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+# os / editor
+.DS_Store
+*.swp
+
+# model weights -> HuggingFace, not git
+checkpoints/*.pt
