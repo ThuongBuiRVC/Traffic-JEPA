@@ -91,12 +91,17 @@ data/
 │       └── bbox_annotated/
 ├── synwts/data/                             # only needed to retrain
 │   ├── videos/
+│   │   ├── train/<scenario>/{overhead_view,vehicle_view}/*.mp4
+│   │   └── val/<scenario>/{overhead_view,vehicle_view}/*.mp4
 │   └── annotations/
-│       ├── vqa/
-│       ├── caption/
-│       └── bbox_annotated/
+│       ├── vqa/{train,val}/
+│       ├── caption/{train,val}/
+│       └── bbox_annotated/{pedestrian,vehicle}/{train,val}/
 └── processed/                               # the pipeline writes here, leave it empty
 ```
+
+SynWTS keeps a `train` and a `val` split, and step 01 reads both. Note that `bbox_annotated` puts the
+actor before the split, while the other two put the split first.
 
 ## Checkpoints
 
