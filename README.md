@@ -100,6 +100,10 @@ data/
 └── processed/                               # the pipeline writes here, leave it empty
 ```
 
+Nothing under `data/` ships with the repository, the tree is empty and you fill it in.
+`WTS_VQA_PUBLIC_TEST.json` is the SubTask2 question file from the challenge test data, the rest comes
+from the two sources above.
+
 SynWTS keeps a `train` and a `val` split, and step 01 reads both. Note that `bbox_annotated` puts the
 actor before the split, while the other two put the split first.
 
