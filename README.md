@@ -34,7 +34,14 @@ Two stages. The second reads the output of the first.
 ## Environment
 
 One NVIDIA GPU (≥ 12 GB for VQA, ≥ 20 GB for captioning) and a HuggingFace token with access to the
-gated `meta-llama/Llama-3.2-1B`:
+gated `meta-llama/Llama-3.2-1B`.
+
+> **Before you run anything:** request access at
+> https://huggingface.co/meta-llama/Llama-3.2-1B (button on the model page, approval from Meta,
+> usually quick but not instant) **with the same account your token belongs to**. A valid token from
+> an account that hasn't been granted access still fails with
+> `403 Cannot access gated repo for url .../Llama-3.2-1B/resolve/main/config.json` — the token's
+> scope and Meta's per-repo approval are two separate things.
 
 ```bash
 export HF_TOKEN=hf_xxxxx
@@ -133,6 +140,14 @@ checkpoints/
 ```
 
 ## Inference
+
+> **First run fails with `URLError: Connection refused` (`localhost:8300`)?** Upstream bug in
+> `facebookresearch/vjepa2`: `VJEPA_BASE_URL` points at a local test server instead of
+> `dl.fbaipublicfiles.com`. Fix the cached hub file and rerun:
+> ```bash
+> sed -i 's#http://localhost:8300#https://dl.fbaipublicfiles.com/vjepa2#' \
+>   ~/.cache/torch/hub/facebookresearch_vjepa2_main/src/hub/backbones.py
+> ```
 
 ### Everything at once
 
