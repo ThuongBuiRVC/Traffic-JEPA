@@ -66,7 +66,7 @@ Measured on real-val (11733 labeled questions), current decoder:
 | + question relation | 0.8352 |
 | + phase transition (full) | 0.8864 |
 
-The frozen model reaches 0.8128 on its own; the decoder adds +7.4 pp on top of an already
+The frozen model reaches 0.8128 on its own. The decoder adds +7.4 pp on top of an already
 strong model.
 
 ### 2. The Viterbi emission is the model score
@@ -93,7 +93,9 @@ The largest term, the phase transition, is exactly what a frozen per-phase model
 its own: the model answers each phase in isolation and has no view of the trajectory, so the
 transition table only supplies the cross-phase consistency the model is missing.
 
-Knobs on `traffic_jepa/postprocess/graph_decode.py` toggle each term (`--temporal_beta 0` drops the
-phase transition, `--alpha 0` the question relation, `--gamma 0` the answer prior) and bound its
-scale (`--relation_cap` for the relation term); `scripts/eval_val.sh` prints the real-val accuracy
-per category.
+Each term has a knob on `traffic_jepa.postprocess.decode_test`: `--temporal_beta 0` drops the phase
+transition, `--alpha 0` the question relation, `--gamma 0` the answer prior, and `--relation_cap`
+bounds the relation term. The run values live in `DECODE_ARGS` in `scripts/env.sh`.
+
+The real-val numbers above were measured with the labeled-split evaluation, which is not part of
+this release — the shipped pipeline only produces the public-test submission.

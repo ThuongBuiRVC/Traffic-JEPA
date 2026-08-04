@@ -62,10 +62,16 @@ def main() -> None:
         *decode_args,
     ]
 
+    # A failing stage already printed its own reason; re-raising here would bury it under a
+    # traceback, so exit with the child's code instead.
     print("== model inference on public test ==", flush=True)
-    subprocess.run(predict_cmd, check=True)
+    rc = subprocess.run(predict_cmd).returncode
+    if rc:
+        raise SystemExit(rc)
     print("== postprocess decode -> final submission ==", flush=True)
-    subprocess.run(decode_cmd, check=True)
+    rc = subprocess.run(decode_cmd).returncode
+    if rc:
+        raise SystemExit(rc)
     print(f"== submission -> {args.out} ==", flush=True)
 
 

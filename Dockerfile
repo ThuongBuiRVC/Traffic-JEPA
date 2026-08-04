@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir --break-system-packages \
         --extra-index-url https://download.pytorch.org/whl/cu130 \
         -r requirements.txt
 
-# Project code (data + checkpoints are mounted at runtime, not baked in).
+# Project code. Data is mounted at run time; weights are pulled from the Hub by entrypoint.sh.
 COPY traffic_jepa/ traffic_jepa/
 COPY configs/ configs/
 COPY checkpoints/ checkpoints/
@@ -28,6 +28,6 @@ ENV HF_HOME=/workspace/.cache/huggingface TORCH_HOME=/workspace/.cache/torch
 # HF_TOKEN must be provided at runtime (meta-llama/Llama-3.2-1B is gated):
 #   docker run --gpus all -e HF_TOKEN=hf_xxx \
 #       -v /path/to/wts_data:/workspace/Traffic-JEPA/data \
-#       traffic-jepa verify   # or: all  (full retrain from raw data)
+#       traffic-jepa inference   # or: train
 ENTRYPOINT ["bash", "entrypoint.sh"]
-CMD ["verify"]
+CMD ["inference"]

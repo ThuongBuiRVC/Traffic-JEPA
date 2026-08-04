@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """Score-level graph decoder for WTS VQA predictions.
 
-The decoder does not train on real rows. It learns answer priors and
-question-to-question relation tables from index_sim, then applies them to
-scored predictions on index_real.
+The decoder never sees a label. It learns answer priors, question-to-question relation
+tables and phase-transition tables from index_sim, then applies them to model scores.
 
-The validation entry point reports accuracy only after decoding. The public
-test entry point uses the same score/graph logic without reading labels.
+`traffic_jepa.postprocess.decode_test` is the entry point. This module holds the shared
+scoring logic it calls.
 """
 from __future__ import annotations
 
-import argparse
 import collections
 import json
 import math
@@ -38,8 +36,7 @@ SMOOTHING_ALPHA = 1e-4
 def norm_question(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "").strip().lower())
 
-def norm_question(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "").strip().lower())
+
 def qkey(row: dict) -> str:
     return f"{row.get('category', '')}::{norm_question(row.get('question', ''))}"
 
@@ -81,6 +78,7 @@ def qtype(row: dict) -> str:
 def group_key(row: dict) -> tuple[str, str]:
     return (row.get("sample", ""), row.get("phase", ""))
 
+
 def build_groups(rows: list[dict]) -> dict[tuple[str, str], dict[str, int]]:
     groups = collections.defaultdict(dict)
     for i, row in enumerate(rows):
@@ -95,42 +93,10 @@ def label_text(row: dict) -> str:
     idx = int(row.get("correct_index", 0))
     return opts[idx] if 0 <= idx < len(opts) else ""
 
+
 def load_rows(path: str | Path) -> list[dict]:
     return [json.loads(l) for l in Path(path).open() if l.strip()]
 
-
-def load_predictions(run_dirs: list[str], pred_name: str) -> dict[str, dict[str, dict]]:
-    out = {}
-    for rd in run_dirs:
-        path = Path(rd) / pred_name
-        if not path.is_file():
-            raise FileNotFoundError(f"missing scored prediction file: {path}")
-        preds = {}
-        for line in path.open():
-            r = json.loads(line)
-            preds[r["qa_id"]] = r
-        out[Path(rd).name] = preds
-    return out
-
-def score_report(rows: list[dict], pred_texts: list[str]) -> tuple[float, int, dict]:
-    ok = collections.Counter()
-    total = collections.Counter()
-    correct = 0
-    for row, pred in zip(rows, pred_texts):
-        good = pred == label_text(row)
-        correct += int(good)
-        cat = row.get("category", "?")
-        ok[cat] += int(good)
-        total[cat] += 1
-    per = {
-        cat: {
-            "correct": ok[cat],
-            "total": total[cat],
-            "acc": ok[cat] / max(total[cat], 1),
-        }
-        for cat in sorted(total)
-    }
-    return correct / max(len(rows), 1), correct, per
 
 def build_temporal_groups(rows: list[dict]) -> dict[tuple[str, str], dict[str, int]]:
     groups = collections.defaultdict(dict)
@@ -210,24 +176,12 @@ def prediction_scores(pred: dict, row: dict) -> list[float]:
     return sc[: len(row.get("options", []))]
 
 
-def base_scores(rows, preds_by_run, route, gamma, gamma_qphase, priors, combine):
+def base_scores(rows, preds, gamma, gamma_qphase, priors):
+    """Model score per option, nudged by the sim answer priors (the decoder's emission term)."""
     question_priors, qphase_priors = priors
     scores = []
     for row in rows:
-        if combine == "mean":
-            acc = np.zeros(len(row.get("options", [])), dtype=np.float64)
-            used = 0
-            for preds in preds_by_run.values():
-                if row["qa_id"] in preds:
-                    acc += np.asarray(prediction_scores(preds[row["qa_id"]], row), dtype=np.float64)
-                    used += 1
-            sc = (acc / max(used, 1)).tolist()
-        else:
-            run_name = route.get(qkey(row)) or route.get(row.get("category", "")) or route.get("*")
-            if run_name is None:
-                run_name = next(iter(preds_by_run))
-            pred = preds_by_run[run_name][row["qa_id"]]
-            sc = prediction_scores(pred, row)
+        sc = prediction_scores(preds[row["qa_id"]], row)
         opts = row.get("options", [])
         add_prior(sc, opts, question_priors[qkey(row)], gamma)
         add_prior(sc, opts, qphase_priors[qphase_key(row)], gamma_qphase)
@@ -356,99 +310,3 @@ def decode(rows, scores, relation_tables, alpha, tau, weights, temporal_tables=N
     ]
     return pred_indices, pred_texts
 
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("run_dirs", nargs="+")
-    ap.add_argument("--sim_index", default="data/cache_vljepa16_8f/index_sim.jsonl")
-    ap.add_argument("--real_index", default="data/cache_vljepa16_8f/index_real.jsonl")
-    ap.add_argument("--pred_name", default="scored_predictions.jsonl")
-    ap.add_argument("--route_json", default="")
-    ap.add_argument("--route_out", default="")
-    ap.add_argument("--combine", choices=["route", "mean"], default="route")
-    ap.add_argument("--gamma", type=float, default=0.02)
-    ap.add_argument("--gamma_qphase", type=float, default=0.0)
-    ap.add_argument("--alpha", type=float, default=1.2)
-    ap.add_argument("--tau", type=float, default=0.12)
-    ap.add_argument("--relation_cap", type=float, default=2.0,
-                    help="cap the relation-table nudge to this many multiples of the "
-                         "destination row's own score span, so it can re-rank options "
-                         "without swamping the model's own score")
-    ap.add_argument("--w_dist", type=float, default=1.3)
-    ap.add_argument("--w_pos", type=float, default=0.7)
-    ap.add_argument("--w_orientation", type=float, default=0.7)
-    ap.add_argument("--w_behavior", type=float, default=0.8)
-    ap.add_argument("--w_gaze", type=float, default=1.0)
-    ap.add_argument("--temporal", action="store_true")
-    ap.add_argument("--temporal_beta", type=float, default=0.0)
-    ap.add_argument("--temporal_stay", type=float, default=0.0)
-    ap.add_argument("--temporal_categories", default="")
-    ap.add_argument("--out", default="runs/graph_decoded_predictions.jsonl")
-    args = ap.parse_args()
-
-    sim_rows = load_rows(args.sim_index)
-    real_rows = load_rows(args.real_index)
-    preds_by_run = load_predictions(args.run_dirs, args.pred_name)
-
-    if args.route_json:
-        route = json.load(open(args.route_json))
-    else:
-        first = next(iter(preds_by_run))
-        route = {"*": first}
-
-    if args.route_out:
-        Path(args.route_out).parent.mkdir(parents=True, exist_ok=True)
-        json.dump(route, open(args.route_out, "w"), indent=2, sort_keys=True)
-
-    priors = build_priors(sim_rows)
-    rel_tables = build_relation_tables(sim_rows)
-    temporal_tables = build_temporal_tables(sim_rows) if args.temporal else None
-    scores = base_scores(
-        real_rows,
-        preds_by_run,
-        route,
-        args.gamma,
-        args.gamma_qphase,
-        priors,
-        args.combine,
-    )
-    pred_indices, pred_texts = decode(
-        real_rows,
-        scores,
-        rel_tables,
-        alpha=args.alpha,
-        tau=args.tau,
-        weights={
-            ("dist_vp", "dist_pv"): args.w_dist,
-            ("pos_vp", "pos_pv"): args.w_pos,
-            ("travel", "body"): args.w_orientation,
-            ("action", "fine"): args.w_behavior,
-            ("los", "aware"): args.w_gaze,
-        },
-        temporal_tables=temporal_tables,
-        temporal_beta=args.temporal_beta,
-        temporal_stay=args.temporal_stay,
-        temporal_categories=args.temporal_categories,
-        relation_cap=args.relation_cap,
-    )
-
-    acc, correct, per = score_report(real_rows, pred_texts)
-    print(f"GRAPH_DECODE: {correct}/{len(real_rows)} = {acc:.4f}")
-    for cat, d in per.items():
-        print(f"  {cat:29s} {d['acc']:.4f} ({d['correct']}/{d['total']})")
-
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w") as fh:
-        for row, idx, text in zip(real_rows, pred_indices, pred_texts):
-            fh.write(json.dumps({
-                "qa_id": row["qa_id"],
-                "selector": row.get("category", ""),
-                "pred_index": idx,
-                "pred_text": text,
-            }) + "\n")
-    print(f"saved -> {out}")
-
-
-if __name__ == "__main__":
-    main()

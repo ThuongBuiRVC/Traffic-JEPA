@@ -62,10 +62,10 @@ def build_test_rows(args, scored: dict[str, dict]) -> list[dict]:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--test", default="WTS_VQA_PUBLIC_TEST.json")
+    ap.add_argument("--test", default="data/test/WTS_VQA_PUBLIC_TEST.json")
     ap.add_argument("--route", default="route.json")
-    ap.add_argument("--bbox-root", default="data/raw/public_test_annotations")
-    ap.add_argument("--videos-root", default="data/raw/public_test_videos")
+    ap.add_argument("--bbox-root", default="data/test/annotations")
+    ap.add_argument("--videos-root", default="data/test/videos/test/public")
     ap.add_argument("--sim_index", default="data/processed/cache_vljepa16_8f/index_sim.jsonl")
     ap.add_argument("--scored", required=True, help="scored JSONL from traffic_jepa.inference.predict")
     ap.add_argument("--out", required=True, help="submission JSON to write")
@@ -99,17 +99,7 @@ def main():
     relation_tables = gd.build_relation_tables(sim_rows)
     temporal_tables = gd.build_temporal_tables(sim_rows) if args.temporal else None
 
-    preds_by_run = {"public_test_model": scored}
-    route = {"*": "public_test_model"}
-    scores = gd.base_scores(
-        rows,
-        preds_by_run,
-        route,
-        args.gamma,
-        args.gamma_qphase,
-        priors,
-        "route",
-    )
+    scores = gd.base_scores(rows, scored, args.gamma, args.gamma_qphase, priors)
     pred_indices, pred_texts = gd.decode(
         rows,
         scores,

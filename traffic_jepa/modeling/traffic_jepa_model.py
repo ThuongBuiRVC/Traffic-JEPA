@@ -33,7 +33,6 @@ class TrafficJEPAModel(nn.Module):
         use_prior_tokens: bool = True,
         spatial_pool_size: int = 1,
         ablation_no_visual: bool = False,
-        tiny: bool = False,
     ) -> None:
         super().__init__()
         self.temperature = float(temperature)
@@ -49,7 +48,6 @@ class TrafficJEPAModel(nn.Module):
             output_dim=768,
             num_layers=num_layers,
             torch_dtype="auto",
-            tiny=tiny,
         )
         self.tokenizer = self.predictor.tokenizer
 

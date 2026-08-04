@@ -4,3 +4,6 @@ submissions/
 logs/
 **/__pycache__/
 *.pyc
+# weights come from the Hub at run time, not baked into the image
+checkpoints/*.pt
+checkpoints/caption_lora/

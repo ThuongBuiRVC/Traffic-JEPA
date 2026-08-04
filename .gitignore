@@ -1,11 +1,16 @@
-# data (WTS dataset — provided by user, not shipped)
-data/
+# data (WTS dataset — provided by user, not shipped).
+# The empty tree is kept so the layout is visible, the contents never are.
+/data/**
+!/data/**/
+!/data/**/.gitkeep
 # produced artifacts / regeneratable
-runs/
-clean_run/
-submissions/verify_*
+/runs/
+/clean_run/
 submissions/submission_raw*
+submissions/submission_final*
 submissions/*_decoded.jsonl
+submissions/*_cache.jsonl
+submissions/caption_submission*.json
 # python
 __pycache__/
 *.pyc
@@ -18,3 +23,7 @@ venv/
 
 # model weights -> HuggingFace, not git
 checkpoints/*.pt
+checkpoints/caption_lora/
+checkpoints/caption_lora_mm/
+# regenerated next to the checkpoint by scripts/04_submit_test.sh
+checkpoints/run_args.json

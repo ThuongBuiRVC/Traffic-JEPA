@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """Train Traffic-JEPA on cached WTS QA and report per-category accuracy.
 
-Train = all simulation QA (index_sim); validation = all real QA (index_real, sim2real).
+Everything comes from the simulation split (index_sim), and no real data is read at any point.
+Training runs a fixed number of epochs with no early stopping. The evaluation each epoch is for
+monitoring only, and `model_latest.pt` after the last epoch is the model that gets used.
 """
 from __future__ import annotations
 import argparse, collections, json, os, random, re, sys, time
@@ -103,48 +105,9 @@ def weak_mean(rep):
     return sum(vals) / len(vals) if vals else 0.0
 
 
-def selection_score(rep, mode):
-    overall = float(rep.get("overall_acc") or 0.0)
-    weak = weak_mean(rep)
-    if mode == "weak_mean":
-        return weak
-    if mode == "overall":
-        return overall
-    return 0.7 * overall + 0.3 * weak
-
-
-def category_score(rep, category):
-    if not category:
-        return None
-    per = rep.get("per_category") or {}
-    return float(per[category]["acc"]) if category in per else 0.0
-
-
-def question_score(rep, question, category=""):
-    if not question:
-        return None
-    qkey = norm_question(question)
-    per = rep.get("per_question") or {}
-    keys = [f"{category}::{qkey}"] if category else []
-    keys.append(qkey)
-    for key in keys:
-        if key in per:
-            return float(per[key]["acc"])
-    return 0.0
-
-
-def checkpoint_score(rep, mode, category, question=""):
-    q = question_score(rep, question, category)
-    if q is not None:
-        return q
-    cat = category_score(rep, category)
-    return cat if cat is not None else selection_score(rep, mode)
-
-
 @torch.no_grad()
 def evaluate(model, dl, device, amp, desc):
-    """Accuracy + InfoNCE loss over LABELED rows; predictions for ALL rows.
-    Real rows whose answer couldn't be borrowed from sim stay unlabeled (predictions only)."""
+    """Accuracy + InfoNCE loss over the labeled rows, predictions for all of them."""
     model.eval()
     by = collections.defaultdict(lambda: [0, 0])     # selector -> [correct, total]
     by_q = collections.defaultdict(lambda: [0, 0])   # category::question -> [correct, total]
@@ -233,7 +196,7 @@ def build_args():
     ap = argparse.ArgumentParser()
     # optimization
     ap.add_argument("--epochs", type=int, default=8)
-    ap.add_argument("--eval_every", type=int, default=1, help="benchmark sim+real every n epochs")
+    ap.add_argument("--eval_every", type=int, default=1, help="benchmark every n epochs")
     ap.add_argument("--batch_size", type=int, default=2, help=">=2 (InfoNCE needs in-batch negatives)")
     ap.add_argument("--grad_accum", type=int, default=16)
     ap.add_argument("--grad_clip", type=float, default=1.0)
@@ -262,15 +225,7 @@ def build_args():
     ap.add_argument("--meta_dropout", type=float, default=0.0,
                     help="probability of corrupting phase/selector metadata during training (anti-shortcut)")
     ap.add_argument("--train_index_suffix", default="", help="suffix for index_sim*.jsonl used for training")
-    ap.add_argument("--sim_eval_index_suffix", default="", help="suffix for index_sim*.jsonl used for sim eval")
-    ap.add_argument("--real_eval_index_suffix", default="", help="suffix for index_real*.jsonl used for real eval")
-    ap.add_argument("--no_sim_eval", action="store_true", help="skip sim evaluation; validate only on real")
-    # checkpoint selection / early stop
-    ap.add_argument("--select_metric", default="composite", choices=["overall", "weak_mean", "composite"],
-                    help="checkpoint/early-stop metric on real: overall, weak mean, or 0.7*overall+0.3*weak")
-    ap.add_argument("--select_category", default="", help="checkpoint/early-stop by this real category accuracy")
-    ap.add_argument("--select_question", default="", help="checkpoint/early-stop by this exact normalized real question accuracy")
-    ap.add_argument("--patience", type=int, default=3, help="early-stop after N evals without a real-acc gain")
+    ap.add_argument("--eval_index_suffix", default="", help="suffix for the index_sim*.jsonl used to validate")
     ap.add_argument("--init_checkpoint", default="", help="load an existing model checkpoint before training")
     # runtime
     ap.add_argument("--workers", type=int, default=6)
@@ -311,17 +266,12 @@ def build_datasets(args, tokenizer):
     cache = args.cache
     train_ds = WTSCachedDataset(cache, "sim", tokenizer, index_suffix=args.train_index_suffix,
                                 mirror_p=args.mirror_p, weak_weight=args.weak_weight,
-                                meta_dropout=args.meta_dropout)                     # train: ALL sim (+aug)
-    sim_ds = None if args.no_sim_eval else WTSCachedDataset(
-        cache, "sim", tokenizer, index_suffix=args.sim_eval_index_suffix)           # benchmark sim split
-    real_ds = WTSCachedDataset(cache, "real", tokenizer,
-                               index_suffix=args.real_eval_index_suffix)            # benchmark real split
+                                meta_dropout=args.meta_dropout)                # train: ALL sim (+aug)
+    eval_ds = WTSCachedDataset(cache, "sim", tokenizer, index_suffix=args.eval_index_suffix)
     if args.limit:
         train_ds.rows = train_ds.rows[: args.limit]
-        if sim_ds is not None:
-            sim_ds.rows = sim_ds.rows[: args.limit]
-        real_ds.rows = real_ds.rows[: args.limit]
-    return train_ds, sim_ds, real_ds
+        eval_ds.rows = eval_ds.rows[: args.limit]
+    return train_ds, eval_ds
 
 
 def build_optimizer(model, args):
@@ -338,19 +288,15 @@ def build_optimizer(model, args):
     return opt, backbone, heads
 
 
-def save_checkpoint(model, out, report, is_best, real_rep):
+def save_checkpoint(model, out, report):
+    """Overwrite the checkpoint every epoch. Training runs a fixed number of epochs and the last
+    one is what gets used, so there is no best-epoch selection to make."""
     # keep the unfrozen layers + all heads/buffers (not the frozen Llama backbone)
     state = {n: p.detach().cpu() for n, p in model.named_parameters()
              if p.requires_grad or not n.startswith("predictor.backbone.")}
     state.update({n: b.detach().cpu() for n, b in model.named_buffers()})
     torch.save(state, out / "model_latest.pt")
     json.dump(report, open(out / "report_latest.json", "w"), indent=2)
-    if is_best:
-        torch.save(state, out / "model_best.pt")
-        json.dump(report, open(out / "report_best.json", "w"), indent=2)
-        with open(out / "validation_predictions_best.jsonl", "w") as fh:
-            for r in real_rep["predictions"]:
-                fh.write(json.dumps(r) + "\n")
 
 
 def main():
@@ -368,13 +314,11 @@ def main():
 
     model = build_model(args, device)
     collate = WTSCollator(model.tokenizer.pad_token_id or 0)
-    train_ds, sim_ds, real_ds = build_datasets(args, model.tokenizer)
-    sim_len = 0 if sim_ds is None else len(sim_ds)
-    console.print(f"train={len(train_ds)}  sim_eval={sim_len}  real={len(real_ds)}  amp={amp}")
+    train_ds, eval_ds = build_datasets(args, model.tokenizer)
+    console.print(f"train={len(train_ds)}  eval={len(eval_ds)}  amp={amp}")
 
     train_dl = loader(train_ds, args.batch_size, collate, True, args.workers, drop_last=True)
-    sim_dl = None if sim_ds is None else loader(sim_ds, args.batch_size, collate, False, args.workers)
-    real_dl = loader(real_ds, args.batch_size, collate, False, args.workers)
+    eval_dl = loader(eval_ds, args.batch_size, collate, False, args.workers)
 
     opt, backbone, heads = build_optimizer(model, args)
     steps_per_epoch = max(1, len(train_dl) // max(args.grad_accum, 1))
@@ -386,8 +330,8 @@ def main():
     json.dump(vars(args), open(out / "run_args.json", "w"), indent=2, sort_keys=True)
 
     step = 0
-    sim_rep = real_rep = None                            # may stay None in a --max_steps probe
-    t_start = time.time(); best_score = -1.0; best_val = -1.0; no_improve = 0
+    eval_rep = None                                      # may stay None in a --max_steps probe
+    t_start = time.time()
     for epoch in range(1, args.epochs + 1):
         if args.max_hours and (time.time() - t_start) / 3600 >= args.max_hours:
             console.print(f"[magenta]time budget {args.max_hours}h reached at epoch {epoch} -> stop"); break
@@ -429,54 +373,26 @@ def main():
         console.print(f"epoch {epoch} train acc={run[0]/max(run[1],1):.4f} loss={train_loss} "
                       f"({time.time()-t0:.0f}s)")
         if (epoch % args.eval_every == 0) or (epoch == args.epochs):
-            sim_rep = None if sim_dl is None else evaluate(model, sim_dl, device, amp, "eval sim")
-            real_rep = evaluate(model, real_dl, device, amp, "eval real (sim2real)")
-            if sim_rep is not None:
-                print_report(f"[ep{epoch}] SIM", sim_rep)
-            print_report(f"[ep{epoch}] REAL (sim2real)", real_rep)
-            sim_loss = None if sim_rep is None else sim_rep["loss"]
-            console.print(f"[ep{epoch}] loss  train={train_loss}  sim={sim_loss}  real={real_rep['loss']}")
-            score = checkpoint_score(real_rep, args.select_metric, args.select_category, args.select_question)
+            eval_rep = evaluate(model, eval_dl, device, amp, "eval")
+            print_report(f"[ep{epoch}] EVAL", eval_rep)
+            console.print(f"[ep{epoch}] loss  train={train_loss}  eval={eval_rep['loss']}")
             report = {"epoch": epoch, "train_loss": train_loss,
-                      "sim": None if sim_rep is None else {k: v for k, v in sim_rep.items() if k != "predictions"},
-                      "real": {k: v for k, v in real_rep.items() if k != "predictions"},
-                      "validation_weak_mean": round(weak_mean(real_rep), 4),
-                      "select_metric": args.select_metric,
-                      "select_category": args.select_category,
-                      "select_question": norm_question(args.select_question),
-                      "select_score": round(score, 4)}
-            is_best = real_rep["overall_acc"] is not None and score > best_score
-            save_checkpoint(model, out, report, is_best, real_rep)
-            if is_best:
-                best_score = score; best_val = real_rep["overall_acc"]; no_improve = 0
-                console.print(f"[green]new best score={best_score:.4f} val={best_val} "
-                              f"weak={weak_mean(real_rep):.4f} -> model_best.pt")
-            else:
-                no_improve += 1
-                console.print(f"[yellow]no metric gain ({no_improve}/{args.patience}), "
-                              f"best_score={best_score:.4f} best_val={best_val}")
-            if args.patience and no_improve >= args.patience:
-                console.print(f"[magenta]early stop: validation acc flat for {args.patience} evals"); break
+                      "eval": {k: v for k, v in eval_rep.items() if k != "predictions"},
+                      "weak_mean": round(weak_mean(eval_rep), 4)}
+            save_checkpoint(model, out, report)
+            console.print(f"[green]epoch {epoch} saved -> model_latest.pt "
+                          f"(acc={eval_rep['overall_acc']} weak={weak_mean(eval_rep):.4f})")
 
-    if real_rep is None:     # --max_steps probe ended before any eval
+    if eval_rep is None:     # --max_steps probe ended before any eval
         console.rule("[bold green]probe done (no eval)")
         return
     with open(out / "validation_predictions.jsonl", "w") as fh:
-        for r in real_rep["predictions"]:
+        for r in eval_rep["predictions"]:
             fh.write(json.dumps(r) + "\n")
-    for rep in (sim_rep, real_rep):
-        if rep is not None:
-            rep.pop("predictions", None)
-    json.dump({"sim": sim_rep, "real": real_rep, "best_validation_acc": best_val,
-               "validation_note": f"{real_rep['labeled']}/{real_rep['n']} real rows labeled by borrowing sim QA; "
-                            f"rest are template-bank questions absent from the scenario annotation"},
-              open(out / "final_report.json", "w"), indent=2)
+    eval_rep.pop("predictions", None)
+    json.dump({"eval": eval_rep, "epochs_run": args.epochs}, open(out / "final_report.json", "w"), indent=2)
     console.rule("[bold green]done")
-    if sim_rep is None:
-        console.print(f"final  REAL acc={real_rep['overall_acc']} loss={real_rep['loss']} ({real_rep['labeled']} labeled)")
-    else:
-        console.print(f"final  SIM acc={sim_rep['overall_acc']} loss={sim_rep['loss']}  |  "
-                      f"REAL acc={real_rep['overall_acc']} loss={real_rep['loss']} ({real_rep['labeled']} labeled)")
+    console.print(f"final  acc={eval_rep['overall_acc']} loss={eval_rep['loss']} ({eval_rep['labeled']} labeled)")
 
 
 if __name__ == "__main__":

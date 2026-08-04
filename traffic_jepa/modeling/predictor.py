@@ -7,29 +7,6 @@ from torch import nn
 from transformers import AutoModel, AutoTokenizer, PreTrainedTokenizerBase
 
 from traffic_jepa.modeling.hf_auth import resolve_hf_token
-from traffic_jepa.modeling.tokenizer import SimpleTokenizer
-
-
-class TinyPredictorBackbone(nn.Module):
-    def __init__(self, vocab_size: int = 32000, hidden_size: int = 64, layers: int = 2) -> None:
-        super().__init__()
-        self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_size,
-            nhead=4,
-            dim_feedforward=hidden_size * 4,
-            batch_first=True,
-            activation="gelu",
-        )
-        self.layers = nn.TransformerEncoder(encoder_layer, num_layers=layers)
-        self.norm = nn.LayerNorm(hidden_size)
-        self.config = type("TinyConfig", (), {"hidden_size": hidden_size})()
-
-    def forward(
-        self, inputs_embeds: torch.Tensor, attention_mask: torch.Tensor | None = None, **_: object
-    ) -> torch.Tensor:
-        key_padding_mask = attention_mask == 0 if attention_mask is not None else None
-        return self.norm(self.layers(inputs_embeds, src_key_padding_mask=key_padding_mask))
 
 
 class Predictor(nn.Module):
@@ -43,32 +20,29 @@ class Predictor(nn.Module):
         trust_remote_code: bool = True,
         hf_token: bool | str | None = True,
         torch_dtype: str | None = "auto",
-        tiny: bool = False,
     ) -> None:
         super().__init__()
-        self.tiny = tiny
-        if tiny:
-            self.backbone = TinyPredictorBackbone(layers=max(1, min(num_layers, 2)))
-            self.tokenizer = SimpleTokenizer()
-        else:
-            token = resolve_hf_token(hf_token)
-            kwargs: dict[str, Any] = {"trust_remote_code": trust_remote_code, "token": token}
-            if torch_dtype:
-                kwargs["torch_dtype"] = torch_dtype
-            self.backbone = AutoModel.from_pretrained(model_name, **kwargs)
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=trust_remote_code, token=token
+        token = resolve_hf_token(hf_token)
+        kwargs: dict[str, Any] = {"trust_remote_code": trust_remote_code, "token": token}
+        if torch_dtype:
+            kwargs["torch_dtype"] = torch_dtype
+        self.backbone = AutoModel.from_pretrained(model_name, **kwargs)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_name, trust_remote_code=trust_remote_code, token=token
+        )
+        if hasattr(self.backbone, "layers"):
+            self.backbone.layers = nn.ModuleList(list(self.backbone.layers)[-num_layers:])
+        elif hasattr(self.backbone, "model") and hasattr(self.backbone.model, "layers"):
+            self.backbone.model.layers = nn.ModuleList(
+                list(self.backbone.model.layers)[-num_layers:]
             )
-            if hasattr(self.backbone, "layers"):
-                self.backbone.layers = nn.ModuleList(list(self.backbone.layers)[-num_layers:])
-            elif hasattr(self.backbone, "model") and hasattr(self.backbone.model, "layers"):
-                self.backbone.model.layers = nn.ModuleList(
-                    list(self.backbone.model.layers)[-num_layers:]
-                )
-            self._disable_causal_attention()
+        self._disable_causal_attention()
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token or self.tokenizer.unk_token
         hidden_size = int(getattr(self.backbone.config, "hidden_size", output_dim))
+        # TrafficJEPAModel projects the visual tokens with its own `visual_proj` and calls the
+        # backbone directly, so this layer is unused at run time — it is kept because the
+        # trained checkpoint carries its weights.
         self.vision_projection = nn.Linear(vision_dim, hidden_size)
         self.output_projection = nn.Linear(hidden_size, output_dim)
 
@@ -138,29 +112,3 @@ class Predictor(nn.Module):
                 is_causal=False,
             )
         return backbone.norm(hidden)
-
-    def forward(
-        self,
-        visual_tokens: torch.Tensor,
-        query_input_ids: torch.Tensor,
-        query_attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        visual_embeds = self.vision_projection(
-            visual_tokens.to(dtype=self.vision_projection.weight.dtype)
-        )
-        query_embeds = self._embed_query(query_input_ids)
-        visual_embeds = visual_embeds.to(dtype=query_embeds.dtype)
-        inputs_embeds = torch.cat([visual_embeds, query_embeds], dim=1)
-        visual_mask = torch.ones(
-            visual_embeds.shape[:2],
-            dtype=query_attention_mask.dtype,
-            device=query_attention_mask.device,
-        )
-        attention_mask = torch.cat([visual_mask, query_attention_mask], dim=1)
-        if isinstance(self.backbone, TinyPredictorBackbone):
-            hidden = self.backbone(inputs_embeds=inputs_embeds, attention_mask=attention_mask)
-        else:
-            hidden = self._forward_bidirectional_backbone(inputs_embeds, attention_mask)
-        mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
-        pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
-        return self.output_projection(pooled.to(dtype=self.output_projection.weight.dtype))

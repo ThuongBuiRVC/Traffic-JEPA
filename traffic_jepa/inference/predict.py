@@ -3,7 +3,7 @@
 
 Per question:
   route question -> (category, view)
-  pick camera    -> overhead: largest pedestrian/vehicle box in the phase; else the vehicle video
+  pick camera    -> overhead: largest pedestrian/vehicle box in the phase, else the vehicle video
   pick window    -> phase [start, end] (or bbox-centred for environment) -> 16 frames
   encode         -> V-JEPA 2 @384 -> latent grid
   score          -> cosine(model answer embedding, EmbeddingGemma option vectors) -> argmax
@@ -11,7 +11,7 @@ Per question:
 Writes both the submission ([{id, correct}]) and a per-question scored jsonl for the decoder.
 """
 from __future__ import annotations
-import argparse, json, os, re
+import argparse, json, re
 from collections import Counter
 from pathlib import Path
 
@@ -32,7 +32,7 @@ OVERHEAD_RE = re.compile(r"Camera\d|192\.168")
 
 # ----------------------------- raw test bbox -----------------------------
 def _bbox_file(bbox_root, kind, scenario, view, video_stem):
-    """Prefer bbox_generated (dense, ~per-frame; matches training box density ~7/8 frames).
+    """Prefer bbox_generated (dense, roughly per-frame, matching training box density ~7/8 frames).
     bbox_annotated on the public test is sparse (3-5 frames, often 0) -> empty object tokens."""
     base = Path(bbox_root)
     parent = f"normal_trimmed/{scenario}" if "normal" in scenario else scenario   # normal lives under normal_trimmed/
@@ -316,7 +316,8 @@ def _video_path(videos_root, scenario, view, video):
     return hits[0] if hits else None
 
 
-def run_inference(jobs, videos_root, bbox_root, ckpt, vjepa_spec, llama, gemma, out_path, limit=0, batch_size=32):
+def run_inference(jobs, bbox_root, ckpt, vjepa_spec, llama, gemma, out_path, limit=0, batch_size=32,
+                  tta_mc=1):
     import torch
     import torch.nn.functional as F
     from transformers import AutoModel, AutoTokenizer
@@ -505,10 +506,10 @@ def run_inference(jobs, videos_root, bbox_root, ckpt, vjepa_spec, llama, gemma, 
         collated = {k: v.to(dev) if torch.is_tensor(v) else v for k, v in collated.items()}
         try:
             with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-                if args.tta_mc > 1:
+                if tta_mc > 1:
                     model.train()  # Enable dropout for MC-Dropout
                     sum_sims = 0
-                    for _ in range(args.tta_mc):
+                    for _ in range(tta_mc):
                         y_hat, dl = model.forward(collated)[:2]
                         sims = model.option_scores(y_hat, dl, collated)
                         sum_sims = sum_sims + sims
@@ -519,7 +520,7 @@ def run_inference(jobs, videos_root, bbox_root, ckpt, vjepa_spec, llama, gemma, 
                     pred_indices = model.final_pred(y_hat, dl, collated)
                     sims = model.option_scores(y_hat, dl, collated)
             for i, (k, _) in enumerate(batch_items):
-                sc = sum_sims[i] if args.tta_mc > 1 else sims[i]
+                sc = sum_sims[i] if tta_mc > 1 else sims[i]
                 n_opt = int(collated["n_opt"][i].item())
                 preds[k] = {
                     "id": jobs[k]["id"],
@@ -609,5 +610,5 @@ if __name__ == "__main__":
             j["window"] = choose_window(j["selector"], j["phase"], args.bbox_root, j["scenario"],
                                         j["view"], Path(j["video"]).stem, j["fps"], dur, j["phase_num"],
                                         frame_area(p))
-        run_inference(jobs, args.videos_root, args.bbox_root, args.ckpt, args.vjepa,
-                      args.llama, args.gemma, args.out, args.limit, args.batch_size)
+        run_inference(jobs, args.bbox_root, args.ckpt, args.vjepa, args.llama, args.gemma,
+                      args.out, args.limit, args.batch_size, args.tta_mc)
