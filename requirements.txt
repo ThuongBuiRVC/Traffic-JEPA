@@ -1,5 +1,5 @@
 # Traffic-JEPA — pinned to the environment that produced the top-1 result.
-# torch/vision are CUDA 13.0 wheels; install with the cu130 index (see Dockerfile / README).
+# torch/vision are CUDA 13.0 wheels, install with the cu130 index (see the README).
 torch==2.12.0
 numpy==2.4.5
 

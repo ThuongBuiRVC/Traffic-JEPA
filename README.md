@@ -36,39 +36,15 @@ Two stages. The second reads the output of the first.
 One NVIDIA GPU (≥ 12 GB for VQA, ≥ 20 GB for captioning) and a HuggingFace token with access to the
 gated `meta-llama/Llama-3.2-1B`.
 
-> **Before you run anything:** request access at
-> https://huggingface.co/meta-llama/Llama-3.2-1B (button on the model page, approval from Meta,
-> usually quick but not instant) **with the same account your token belongs to**. A valid token from
-> an account that hasn't been granted access still fails with
-> `403 Cannot access gated repo for url .../Llama-3.2-1B/resolve/main/config.json` — the token's
-> scope and Meta's per-repo approval are two separate things.
+> Request access on the [model page](https://huggingface.co/meta-llama/Llama-3.2-1B) first, using
+> the same account the token belongs to. The approval is per repository, so a valid token on its own
+> still gets `403 Cannot access gated repo`.
 
 ```bash
 export HF_TOKEN=hf_xxxxx
 ```
 
-### Docker (recommended)
-
-The image already contains CUDA 13.0, every Python dependency and `ffmpeg`. The host needs nothing
-but an NVIDIA driver and nvidia-container-toolkit.
-
-```bash
-docker build -t traffic-jepa .
-docker run --gpus all -e HF_TOKEN=$HF_TOKEN \
-    -v $(pwd)/data:/workspace/Traffic-JEPA/data \
-    -v $(pwd)/checkpoints:/workspace/Traffic-JEPA/checkpoints \
-    -v $(pwd)/submissions:/workspace/Traffic-JEPA/submissions \
-    traffic-jepa inference
-```
-
-| mode | what it does |
-|---|---|
-| `inference` | answers the questions, then writes the captions. Produces both submission files. |
-| `train` | trains the VQA predictor and the caption LoRA from raw data. Produces checkpoints only. |
-
-### Without Docker
-
-Install CUDA 13.0 and `ffmpeg` on the host yourself, then:
+Install CUDA 13.0 and `ffmpeg`, then:
 
 ```bash
 conda create -n traffic-jepa python=3.12 -y
@@ -119,16 +95,11 @@ actor before the split, while the other two put the split first.
 The trained weights are not in this repository. They live on the Hub —
 [ThuongBuiRVC/Traffic-JEPA](https://huggingface.co/ThuongBuiRVC/Traffic-JEPA).
 
-**With Docker there is nothing to do.** On start the container looks in the `checkpoints/` you
-mounted and, if anything is missing, downloads the weights into it before running your command.
-
-**Without Docker**, fetch them once yourself:
-
 ```bash
 hf download ThuongBuiRVC/Traffic-JEPA --local-dir checkpoints/
 ```
 
-Either way you end up with:
+You end up with:
 
 ```text
 checkpoints/
@@ -141,9 +112,8 @@ checkpoints/
 
 ## Inference
 
-> **First run fails with `URLError: Connection refused` (`localhost:8300`)?** Upstream bug in
-> `facebookresearch/vjepa2`: `VJEPA_BASE_URL` points at a local test server instead of
-> `dl.fbaipublicfiles.com`. Fix the cached hub file and rerun:
+> **`URLError: Connection refused` on `localhost:8300`?** `facebookresearch/vjepa2` currently ships
+> `VJEPA_BASE_URL` pointing at a local test server. Patch the cached copy and rerun:
 > ```bash
 > sed -i 's#http://localhost:8300#https://dl.fbaipublicfiles.com/vjepa2#' \
 >   ~/.cache/torch/hub/facebookresearch_vjepa2_main/src/hub/backbones.py
@@ -194,17 +164,16 @@ bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_m
 An interrupted run resumes from the `*_cache.jsonl` beside the output. Delete it to regenerate, or
 pass `--limit 5` for a quick test.
 
-**Serve the model to go faster.** Loaded in-process it captions one segment at a time. A vLLM
-endpoint batches requests, so the segments go out concurrently:
+**Serving is much faster.** In-process the stage captions one segment at a time. Point it at a vLLM
+endpoint and the segments go out concurrently instead:
 
 ```bash
-cd serving && HF_TOKEN=$HF_TOKEN docker compose up -d && cd ..
+bash serving/start.sh                          # one server, all three modes
 export CAPTION_SERVER=http://localhost:8100/v1
-bash scripts/05_caption.sh          # or: mm | base, same commands as above
+bash scripts/05_caption.sh                     # same commands as above
 ```
 
-One server covers all three modes, it holds the base model and both adapters at once.
-`CAPTION_WORKERS` sets how many segments are in flight, 8 by default. Details in
+`CAPTION_WORKERS` sets how many segments are in flight, 8 by default. See
 [serving/README.md](serving/README.md).
 
 ## Training
