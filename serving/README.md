@@ -1,8 +1,9 @@
 # Caption server
 
-The caption stage can load Qwen3-VL itself, but then it generates one segment at a time. A served
-endpoint batches requests, so the segments go out concurrently and the run finishes much sooner.
-One server holds the base model and both adapters, so it covers all three caption modes.
+`scripts/05_caption.sh` starts this server on its own and stops it when the run ends, so there is
+nothing to do here for a single run. Start it yourself to keep one server up across several runs,
+which saves reloading the 8B model each time. One server holds the base model and both adapters, so
+it covers all three caption modes.
 
 ## Start
 

@@ -13,7 +13,7 @@ einops==0.8.2
 transformers==5.8.1
 tokenizers==0.22.2
 safetensors==0.7.0
-huggingface-hub==1.15.0
+huggingface-hub==1.26.0
 click==8.4.2  # huggingface-hub's `hf` CLI needs this but doesn't pull it in itself
 accelerate==1.13.0
 peft==0.19.1

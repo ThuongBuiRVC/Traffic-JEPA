@@ -5,7 +5,8 @@
 #   bash scripts/inference.sh mm         # captions the way the paper describes
 #   bash scripts/inference.sh base       # lora without the adapter, a baseline
 #
-# CKPT overrides the VQA checkpoint, CAPTION_LORA / CAPTION_LORA_MM the caption adapters.
+# The caption step serves Qwen3-VL itself and stops the server when it is done, so this is one
+# command. CKPT overrides the VQA checkpoint, CAPTION_LORA / CAPTION_LORA_MM the caption adapters.
 set -euo pipefail
 here="$(dirname "$0")"
 source "$here/env.sh"

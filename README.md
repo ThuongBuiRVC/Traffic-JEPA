@@ -33,12 +33,14 @@ Two stages. The second reads the output of the first.
 
 ## Environment
 
-One NVIDIA GPU (≥ 12 GB for VQA, ≥ 20 GB for captioning) and a HuggingFace token with access to the
-gated `meta-llama/Llama-3.2-1B`.
+One NVIDIA GPU (≥ 12 GB for VQA, ≥ 20 GB for captioning) and a HuggingFace token with access to two
+gated repositories:
 
-> Request access on the [model page](https://huggingface.co/meta-llama/Llama-3.2-1B) first, using
-> the same account the token belongs to. The approval is per repository, so a valid token on its own
-> still gets `403 Cannot access gated repo`.
+- [`meta-llama/Llama-3.2-1B`](https://huggingface.co/meta-llama/Llama-3.2-1B) — the predictor
+- [`google/embeddinggemma-300m`](https://huggingface.co/google/embeddinggemma-300m) — the option vectors
+
+> Request access on both model pages first, using the same account the token belongs to. The
+> approval is per repository, so a valid token on its own still gets `403 Cannot access gated repo`.
 
 ```bash
 export HF_TOKEN=hf_xxxxx
@@ -164,17 +166,23 @@ bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_m
 An interrupted run resumes from the `*_cache.jsonl` beside the output. Delete it to regenerate, or
 pass `--limit 5` for a quick test.
 
-**Serving is much faster.** In-process the stage captions one segment at a time. Point it at a vLLM
-endpoint and the segments go out concurrently instead:
+The stage serves the model on port 8100 and stops the server when it finishes, so the segments go
+out concurrently. `CAPTION_WORKERS` sets how many are in flight, 8 by default.
+
+Captioning without a server takes hours instead of minutes, so install vLLM before running it:
+
+```bash
+pip install vllm
+```
+
+To keep one server up across several runs, start it yourself and the stage will use it:
 
 ```bash
 bash serving/start.sh                          # one server, all three modes
 export CAPTION_SERVER=http://localhost:8100/v1
-bash scripts/05_caption.sh                     # same commands as above
 ```
 
-`CAPTION_WORKERS` sets how many segments are in flight, 8 by default. See
-[serving/README.md](serving/README.md).
+See [serving/README.md](serving/README.md).
 
 ## Training
 

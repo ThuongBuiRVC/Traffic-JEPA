@@ -51,10 +51,12 @@ DECODE_ARGS="--gamma 0.02 --gamma_qphase 0.12 --alpha 0.8 --tau 0.32 --relation_
   --temporal --temporal_beta 0.8 --temporal_stay 0.2 \
   --temporal_categories pedestrian_behavior,pedestrian_orientation,pedestrian_position,pedestrian_gaze"
 
-# Llama-3.2-1B is gated on HuggingFace. The caption stage does not use it, so its step
-# sets TJ_NEED_HF_TOKEN=0 and runs without a token.
+# Llama-3.2-1B and embeddinggemma-300m are both gated on HuggingFace. The caption stage uses
+# neither, so its step sets TJ_NEED_HF_TOKEN=0 and runs without a token.
 if [ "${TJ_NEED_HF_TOKEN:-1}" = "1" ]; then
-  [ -n "${HF_TOKEN:-}" ] || { echo "ERROR: export HF_TOKEN (needs meta-llama/Llama-3.2-1B access)"; exit 1; }
+  [ -n "${HF_TOKEN:-}" ] || {
+    echo "ERROR: export HF_TOKEN (needs meta-llama/Llama-3.2-1B and google/embeddinggemma-300m access)"
+    exit 1; }
 fi
 
 mkdir -p "$SUBS" "$(dirname "$RUNDIR")"
