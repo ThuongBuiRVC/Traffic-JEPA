@@ -194,6 +194,19 @@ bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_m
 An interrupted run resumes from the `*_cache.jsonl` beside the output. Delete it to regenerate, or
 pass `--limit 5` for a quick test.
 
+**Serve the model to go faster.** Loaded in-process it captions one segment at a time. A vLLM
+endpoint batches requests, so the segments go out concurrently:
+
+```bash
+cd serving && HF_TOKEN=$HF_TOKEN docker compose up -d && cd ..
+export CAPTION_SERVER=http://localhost:8100/v1
+bash scripts/05_caption.sh          # or: mm | base, same commands as above
+```
+
+One server covers all three modes, it holds the base model and both adapters at once.
+`CAPTION_WORKERS` sets how many segments are in flight, 8 by default. Details in
+[serving/README.md](serving/README.md).
+
 ## Training
 
 ### Everything at once

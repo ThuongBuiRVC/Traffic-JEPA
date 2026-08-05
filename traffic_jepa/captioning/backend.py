@@ -1,18 +1,27 @@
-"""Local Qwen3-VL runner — the caption stage loads the model in-process.
+"""Two ways to reach Qwen3-VL, behind one interface.
 
-No server, no vLLM: `generate.py` builds chat messages and calls `QwenVL.chat` directly, the
-same way `traffic_jepa.inference.predict` calls the V-JEPA encoder. A LoRA adapter is attached
-with PEFT and can be switched off for one call, which is what the frame path needs (the adapter
-was trained on the text-only QA path, so image prompts run on the base weights).
+`QwenVL` loads the model in-process with transformers and PEFT. It needs nothing running, but it
+generates one segment at a time, which is slow over hundreds of segments.
+
+`QwenVLServer` talks to an OpenAI-compatible endpoint, normally vLLM. The server batches requests
+across its own queue, so the caption stage can push many segments at once and finish in a fraction
+of the time. Serve the base model plus both adapters as separate `--lora-modules` names.
+
+Both expose `chat(messages)` and a `base_weights()` block that turns the adapter off for one call,
+which the frame path needs when the adapter is text-only.
 """
 from __future__ import annotations
 
 import contextlib
+import json
+import threading
 from pathlib import Path
 
 
 class QwenVL:
-    """Qwen3-VL-8B, optionally with the caption LoRA attached."""
+    """Qwen3-VL-8B in this process, optionally with a LoRA attached."""
+
+    concurrency = 1                                       # generation is serialised on one GPU
 
     def __init__(self, model_id: str, lora_dir: str | Path = "", *, dtype: str = "bfloat16",
                  device_map: str = "auto", max_new_tokens: int = 768) -> None:
@@ -79,6 +88,91 @@ class QwenVL:
             out = self.model.generate(**inputs, **gen_kwargs)
         prompt_len = inputs["input_ids"].shape[1]
         return self.processor.decode(out[0][prompt_len:], skip_special_tokens=True)
+
+
+class QwenVLServer:
+    """The same interface, served over an OpenAI-compatible endpoint such as vLLM.
+
+    `model` is the served name to use normally, `base_model` the one to fall back to inside a
+    `base_weights()` block. With vLLM those are a `--lora-modules` name and the base
+    `--served-model-name`, so switching between them costs nothing on the server side.
+    """
+
+    def __init__(self, base_url: str, model: str, *, base_model: str = "", api_key: str = "",
+                 max_new_tokens: int = 768, timeout: float = 300.0, concurrency: int = 8) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.base_model = base_model or model
+        self.api_key = api_key
+        self.max_new_tokens = int(max_new_tokens)
+        self.timeout = float(timeout)
+        self.concurrency = int(concurrency)
+        self.has_lora = self.base_model != self.model
+        self._local = threading.local()                   # base_weights is per-thread
+
+    @contextlib.contextmanager
+    def base_weights(self):
+        prev = getattr(self._local, "use_base", False)
+        self._local.use_base = True
+        try:
+            yield
+        finally:
+            self._local.use_base = prev
+
+    @staticmethod
+    def _encode_image(img) -> str:
+        """PIL image -> data URI, which is what the OpenAI image_url part expects."""
+        import base64
+        import io
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=90)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+    def _payload(self, messages: list[dict]) -> list[dict]:
+        out = []
+        for m in messages:
+            content = m["content"]
+            if isinstance(content, str):
+                out.append({"role": m["role"], "content": content})
+                continue
+            parts = []
+            for p in content:
+                if p.get("type") == "text":
+                    parts.append({"type": "text", "text": p["text"]})
+                elif p.get("type") == "image":
+                    parts.append({"type": "image_url",
+                                  "image_url": {"url": self._encode_image(p["image"])}})
+            out.append({"role": m["role"], "content": parts})
+        return out
+
+    def chat(self, messages: list[dict], *, max_new_tokens: int | None = None,
+             temperature: float = 0.1) -> str:
+        import urllib.request
+
+        model = self.base_model if getattr(self._local, "use_base", False) else self.model
+        body = json.dumps({
+            "model": model,
+            "messages": self._payload(messages),
+            "max_tokens": int(max_new_tokens or self.max_new_tokens),
+            "temperature": float(temperature),
+            "top_p": 0.9,
+        }).encode()
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        req = urllib.request.Request(f"{self.base_url}/chat/completions", data=body,
+                                     method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = json.loads(resp.read())
+        return data["choices"][0]["message"]["content"]
+
+    def models(self) -> list[str]:
+        """Served model names, used to fail early on a typo or a server that is not up yet."""
+        import urllib.request
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        req = urllib.request.Request(f"{self.base_url}/models", headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return [m["id"] for m in json.loads(resp.read()).get("data", [])]
 
 
 def text_msg(role: str, text: str) -> dict:

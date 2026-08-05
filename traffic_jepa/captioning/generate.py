@@ -12,14 +12,19 @@ Two paths, picked per segment:
                 describes them. The LoRA is text-only, so this path always runs on the base
                 weights, in `--mode lora` too.
 
+The model runs in this process by default. Point `--server` at a vLLM endpoint instead and the
+segments go out concurrently, which is much faster over the full set.
+
 Everything the model writes goes through `mild_clean` / `env_fix`, which is grammar cleanup of
 the model's own output (no template assembly, no ground truth).
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import json
 import os
+import threading
 import re
 import subprocess
 import sys
@@ -28,7 +33,7 @@ from collections import defaultdict
 from pathlib import Path
 from shutil import which
 
-from traffic_jepa.captioning.backend import QwenVL, image_msg, text_msg
+from traffic_jepa.captioning.backend import QwenVL, QwenVLServer, image_msg, text_msg
 from traffic_jepa.inference.predict import _scenario_of
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -575,7 +580,11 @@ def check_inputs(args, segments, facts) -> int:
             print(f"  [{'ok' if ok else 'MISSING'}] {tool:12s} {'found' if ok else 'install it and put it on PATH'}")
 
     print("\n== python packages ==")
-    for mod in ("torch", "transformers", "PIL") + (("peft",) if args.mode == "lora" else ()):
+    if args.server:
+        needed = ("PIL",)
+    else:
+        needed = ("torch", "transformers", "PIL") + (("peft",) if args.mode == "lora" else ())
+    for mod in needed:
         try:
             __import__(mod)
             print(f"  [ok] {mod}")
@@ -585,6 +594,35 @@ def check_inputs(args, segments, facts) -> int:
 
     print("\n" + ("READY" if missing == 0 else f"NOT READY: {missing} item(s) missing"))
     return missing
+
+
+# --------------------------------------------------------------------------- backend
+def build_runner(args):
+    """A served endpoint when --server is given, otherwise the model in this process."""
+    if args.server:
+        served = args.served_model or ("qwen3-vl-8b" if args.mode == "base" else "caption_lora")
+        base = served if args.mode == "base" else args.served_base
+        runner = QwenVLServer(args.server, served, base_model=base, api_key=args.api_key,
+                              max_new_tokens=args.max_new_tokens, concurrency=args.workers)
+        try:
+            names = runner.models()
+        except Exception as e:
+            raise SystemExit(f"FATAL: no server at {args.server} ({e})\n"
+                             f"       start one first, see serving/README.md")
+        for n in {served, base}:
+            if n not in names:
+                raise SystemExit(f"FATAL: the server does not serve {n!r}. It has: {names}")
+        print(f"server={args.server} model={served} base={base} workers={args.workers}", flush=True)
+        return runner
+
+    if args.seed:
+        import torch
+        torch.manual_seed(args.seed)
+    print(f"in-process model={args.model}"
+          f"{' + ' + args.lora if args.mode == 'lora' else ''}", flush=True)
+    return QwenVL(args.model, args.lora if args.mode == "lora" else "",
+                  dtype=args.dtype, device_map=args.device_map,
+                  max_new_tokens=args.max_new_tokens)
 
 
 # --------------------------------------------------------------------------- main
@@ -600,6 +638,17 @@ def build_args():
                     help="number of style examples; default 4 in base mode, 0 in lora mode")
     ap.add_argument("--model", default=BASE_MODEL, help="HF id or local path of Qwen3-VL")
     ap.add_argument("--lora", default=str(DEF_LORA), help="caption LoRA dir (lora mode)")
+    # serving: reach a running vLLM instead of loading the model here. Much faster over
+    # hundreds of segments, because the server batches requests across its own queue.
+    ap.add_argument("--server", default=os.getenv("CAPTION_SERVER", ""),
+                    help="OpenAI-compatible base URL, e.g. http://localhost:8100/v1")
+    ap.add_argument("--served-model", dest="served_model", default=os.getenv("CAPTION_SERVED", ""),
+                    help="[--server] model name to call; default is the mode name")
+    ap.add_argument("--served-base", dest="served_base", default=os.getenv("CAPTION_SERVED_BASE", "qwen3-vl-8b"),
+                    help="[--server] base model name, used where the adapter must be off")
+    ap.add_argument("--api-key", dest="api_key", default=os.getenv("CAPTION_API_KEY", "not-needed"))
+    ap.add_argument("--workers", type=int, default=int(os.getenv("CAPTION_WORKERS", "8")),
+                    help="[--server] segments in flight at once")
     ap.add_argument("--wts-root", dest="wts_root", default=os.getenv("WTS_ROOT", ""),
                     help="WTS test root with annotations/ and videos/ (frame path)")
     ap.add_argument("--out", default=str(DEF_OUT))
@@ -657,24 +706,15 @@ def main():
     print(f"segments={len(tasks)} to generate={len(todo)} (QA={len(todo) - n_frame} frame={n_frame})", flush=True)
 
     if todo:
-        if args.seed:
-            import torch
-            torch.manual_seed(args.seed)
-        runner = QwenVL(args.model, args.lora if args.mode == "lora" else "",
-                        dtype=args.dtype, device_map=args.device_map,
-                        max_new_tokens=args.max_new_tokens)
+        runner = build_runner(args)
         shots = load_style_examples(args.fewshot, args.fewshot_n)
         seg_times = load_segment_times(args.wts_root) if args.wts_root else {}
         if n_frame and not args.wts_root:
             print(f"WARNING: {n_frame} segments have no VQA answers and --wts-root is unset; "
                   f"they get the generic fallback caption. Run with --check for details.", flush=True)
 
-        try:
-            from tqdm import tqdm
-            bar = tqdm(todo, desc="captioning")
-        except ImportError:
-            bar = todo
-        for i, (scenario, phase, _entry) in enumerate(bar, 1):
+        def one(task):
+            scenario, phase, _entry = task
             qa = facts.get((scenario, phase), {})
             try:
                 if qa:
@@ -686,11 +726,36 @@ def main():
                 cap = None
             if not cap or not (cap.get("caption_pedestrian") and cap.get("caption_vehicle")):
                 cap = template_caption(qa)
+            return scenario, phase, cap
+
+        lock = threading.Lock()
+
+        def record(scenario, phase, cap):
             done[(scenario, phase)] = cap
-            with cache_path.open("a") as fh:
+            with lock, cache_path.open("a") as fh:
                 fh.write(json.dumps({"scenario": scenario, "phase": phase, "cap": cap}) + "\n")
-            if bar is todo and i % 10 == 0:
-                print(f"  {i}/{len(todo)}", flush=True)
+
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = None
+
+        workers = max(1, getattr(runner, "concurrency", 1))
+        if workers > 1:
+            with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(one, t) for t in todo]
+                it = cf.as_completed(futures)
+                it = tqdm(it, total=len(futures), desc="captioning") if tqdm else it
+                for i, fut in enumerate(it, 1):
+                    record(*fut.result())
+                    if tqdm is None and i % 10 == 0:
+                        print(f"  {i}/{len(todo)}", flush=True)
+        else:
+            it = tqdm(todo, desc="captioning") if tqdm else todo
+            for i, task in enumerate(it, 1):
+                record(*one(task))
+                if tqdm is None and i % 10 == 0:
+                    print(f"  {i}/{len(todo)}", flush=True)
 
     submission = {}
     for scenario, ents in segments.items():

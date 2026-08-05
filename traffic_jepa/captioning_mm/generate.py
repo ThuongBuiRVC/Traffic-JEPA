@@ -11,17 +11,20 @@ Per segment:
                    real frames are used the same way simulation frames were during training.
   no facts      -> the frames are described directly.
 
-The model is loaded in-process — there is no server.
+The model runs in this process by default, or against a served endpoint with --server.
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import json
+import os
 import sys
+import threading
 from pathlib import Path
 
 from traffic_jepa.captioning import generate as G
-from traffic_jepa.captioning.backend import QwenVL, image_msg, text_msg
+from traffic_jepa.captioning.backend import QwenVL, QwenVLServer, image_msg, text_msg
 
 ROOT = Path(__file__).resolve().parents[2]
 DEF_MANIFEST = ROOT / "data" / "processed" / "caption_mm" / "manifests" / "test.jsonl"
@@ -155,7 +158,8 @@ def check_inputs(args, rows) -> int:
             missing += 1
 
     print("\n== python packages ==")
-    for mod in ("torch", "transformers", "peft", "PIL"):
+    needed = ("PIL",) if args.server else ("torch", "transformers", "peft", "PIL")
+    for mod in needed:
         try:
             __import__(mod)
             print(f"  [ok] {mod}")
@@ -172,6 +176,14 @@ def main():
     ap.add_argument("--manifest", default=str(DEF_MANIFEST))
     ap.add_argument("--model", default=G.BASE_MODEL)
     ap.add_argument("--lora", default=str(DEF_LORA), help="grounded LoRA dir; empty string = base model")
+    # serving: reach a running vLLM instead of loading the model here
+    ap.add_argument("--server", default=os.getenv("CAPTION_SERVER", ""),
+                    help="OpenAI-compatible base URL, e.g. http://localhost:8100/v1")
+    ap.add_argument("--served-model", dest="served_model", default=os.getenv("CAPTION_SERVED_MM", "caption_lora_mm"),
+                    help="[--server] model name to call")
+    ap.add_argument("--api-key", dest="api_key", default=os.getenv("CAPTION_API_KEY", "not-needed"))
+    ap.add_argument("--workers", type=int, default=int(os.getenv("CAPTION_WORKERS", "8")),
+                    help="[--server] segments in flight at once")
     ap.add_argument("--fewshot", default=str(G.DEF_FEWSHOT))
     ap.add_argument("--fewshot_n", type=int, default=0, help="style examples; the adapter needs none")
     ap.add_argument("--out", default=str(DEF_OUT))
@@ -217,18 +229,24 @@ def main():
           flush=True)
 
     if todo:
-        if args.seed:
-            import torch
-            torch.manual_seed(args.seed)
-        runner = QwenVL(args.model, args.lora, dtype=args.dtype, device_map=args.device_map,
-                        max_new_tokens=args.max_new_tokens)
+        if args.server:
+            runner = QwenVLServer(args.server, args.served_model, api_key=args.api_key,
+                                  max_new_tokens=args.max_new_tokens, concurrency=args.workers)
+            try:
+                names = runner.models()
+            except Exception as e:
+                raise SystemExit(f"FATAL: no server at {args.server} ({e})")
+            if args.served_model not in names:
+                raise SystemExit(f"FATAL: the server does not serve {args.served_model!r}. It has: {names}")
+            print(f"server={args.server} model={args.served_model} workers={args.workers}", flush=True)
+        else:
+            if args.seed:
+                import torch
+                torch.manual_seed(args.seed)
+            runner = QwenVL(args.model, args.lora, dtype=args.dtype, device_map=args.device_map,
+                            max_new_tokens=args.max_new_tokens)
         shots = G.load_style_examples(args.fewshot, args.fewshot_n)
-        try:
-            from tqdm import tqdm
-            bar = tqdm(todo, desc="captioning (grounded)")
-        except ImportError:
-            bar = todo
-        for i, row in enumerate(bar, 1):
+        def one(row):
             scenario, phase = row["scenario"], row["phase"]
             facts = row.get("facts") or {}
             images = load_images((row.get("images") or [])[:args.max_images], manifest_root)
@@ -242,11 +260,36 @@ def main():
                 cap = None
             if not cap or not (cap.get("caption_pedestrian") and cap.get("caption_vehicle")):
                 cap = G.template_caption(facts)
+            return scenario, phase, cap
+
+        lock = threading.Lock()
+
+        def record(scenario, phase, cap):
             done[(scenario, phase)] = cap
-            with cache_path.open("a") as fh:
+            with lock, cache_path.open("a") as fh:
                 fh.write(json.dumps({"scenario": scenario, "phase": phase, "cap": cap}) + "\n")
-            if bar is todo and i % 10 == 0:
-                print(f"  {i}/{len(todo)}", flush=True)
+
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            tqdm = None
+
+        workers = max(1, getattr(runner, "concurrency", 1))
+        if workers > 1:
+            with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(one, r) for r in todo]
+                it = cf.as_completed(futures)
+                it = tqdm(it, total=len(futures), desc="captioning (grounded)") if tqdm else it
+                for i, fut in enumerate(it, 1):
+                    record(*fut.result())
+                    if tqdm is None and i % 10 == 0:
+                        print(f"  {i}/{len(todo)}", flush=True)
+        else:
+            it = tqdm(todo, desc="captioning (grounded)") if tqdm else todo
+            for i, row in enumerate(it, 1):
+                record(*one(row))
+                if tqdm is None and i % 10 == 0:
+                    print(f"  {i}/{len(todo)}", flush=True)
 
     submission = {}
     for row in rows:
