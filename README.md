@@ -55,10 +55,6 @@ pip install --extra-index-url https://download.pytorch.org/whl/cu130 -r requirem
 bash scripts/setup_serving.sh    # the caption server, in its own virtualenv
 ```
 
-`setup_serving.sh` builds `.venv-serving/`, which holds vLLM and nothing else. vLLM pins
-`torch==2.11.0` while `requirements.txt` pins 2.12.0, so the two stay apart. Skip that line and the
-caption step builds it on the first run instead.
-
 V-JEPA 2.1, `google/embeddinggemma-300m` and `Qwen/Qwen3-VL-8B-Instruct` download on first use.
 
 ## Data Preparation
