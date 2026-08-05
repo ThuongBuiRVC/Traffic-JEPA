@@ -18,11 +18,17 @@ source "$here/scripts/serve_lib.sh"
 VLLM="${VLLM_BIN:-$(vllm_bin || true)}"
 [ -n "$VLLM" ] || {
   echo "ERROR: no vllm found. Build its environment: bash scripts/setup_serving.sh"; exit 1; }
-for a in caption_lora caption_lora_mm; do
-  [ -f "$here/checkpoints/$a/adapter_config.json" ] || {
-    echo "ERROR: $here/checkpoints/$a is missing. hf download ThuongBuiRVC/Traffic-JEPA --local-dir checkpoints/"
+# the served names stay fixed, the directories behind them follow CAPTION_LORA / CAPTION_LORA_MM
+LORA="${CAPTION_LORA:-$here/checkpoints/caption_lora}"
+LORA_MM="${CAPTION_LORA_MM:-$here/checkpoints/caption_lora_mm}"
+for d in "$LORA" "$LORA_MM"; do
+  [ -f "$d/adapter_config.json" ] || {
+    echo "ERROR: $d is not a LoRA adapter directory."
+    echo "       hf download ThuongBuiRVC/Traffic-JEPA --local-dir checkpoints/"
     exit 1; }
 done
+echo "serving caption_lora=$LORA"
+echo "serving caption_lora_mm=$LORA_MM"
 
 exec "$VLLM" serve "$MODEL" \
   --served-model-name qwen3-vl-8b \
@@ -34,5 +40,5 @@ exec "$VLLM" serve "$MODEL" \
   --enable-lora \
   --max-lora-rank 16 \
   --lora-modules \
-      "caption_lora=$here/checkpoints/caption_lora" \
-      "caption_lora_mm=$here/checkpoints/caption_lora_mm"
+      "caption_lora=$LORA" \
+      "caption_lora_mm=$LORA_MM"

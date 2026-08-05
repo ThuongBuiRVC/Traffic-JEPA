@@ -28,8 +28,9 @@ export RUNDIR="${TJ_RUNDIR:-$TJ_ROOT/runs/traffic_jepa_world_model}"
 export SUBS="${TJ_SUBS:-$TJ_ROOT/submissions}"
 
 # --- caption stage ---
-export CAPTION_LORA="${TJ_CAPTION_LORA:-$TJ_ROOT/checkpoints/caption_lora}"
-export CAPTION_LORA_MM="${TJ_CAPTION_LORA_MM:-$TJ_ROOT/checkpoints/caption_lora_mm}"
+# set either name, or pass the directory to 05_caption.sh, to caption with a LoRA you trained
+export CAPTION_LORA="${CAPTION_LORA:-${TJ_CAPTION_LORA:-$TJ_ROOT/checkpoints/caption_lora}}"
+export CAPTION_LORA_MM="${CAPTION_LORA_MM:-${TJ_CAPTION_LORA_MM:-$TJ_ROOT/checkpoints/caption_lora_mm}}"
 export CAPTION_MM="${TJ_CAPTION_MM:-$DATA/processed/caption_mm}"   # grounded variant: frames + manifests
 export CAPTION_MODEL="${CAPTION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
 # Empty means the caption step serves the model itself. Set this to a vLLM endpoint that is

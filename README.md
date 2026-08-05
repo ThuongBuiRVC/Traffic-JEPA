@@ -155,6 +155,9 @@ Needs the answers from step 1.
 bash scripts/05_caption.sh --check    # check the inputs, load nothing
 bash scripts/05_caption.sh            # lora -> submissions/caption_submission.json
 bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_mm.json
+
+bash scripts/05_caption.sh runs/caption_lora           # a LoRA you trained
+bash scripts/05_caption.sh mm runs/caption_lora_mm     # the mode comes first
 ```
 
 | mode | how it captions |

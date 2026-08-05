@@ -6,6 +6,9 @@
 #   bash scripts/05_caption.sh base         # lora without the adapter, a baseline
 #   bash scripts/05_caption.sh --check       # any flag works with or without a mode
 #
+#   bash scripts/05_caption.sh runs/caption_lora        # a LoRA you trained
+#   bash scripts/05_caption.sh mm runs/caption_lora_mm  # the mode comes first
+#
 # The step serves the model itself and stops the server when it is done. CAPTION_SERVER points it
 # at an endpoint that is already up, CAPTION_NO_SERVE=1 loads the model in-process instead.
 export TJ_NEED_HF_TOKEN=0
@@ -14,6 +17,14 @@ source "$(dirname "$0")/serve_lib.sh"
 MODE=lora
 case "${1:-}" in
   lora|base|mm) MODE="$1"; shift ;;
+esac
+
+# an argument that is not a flag is the adapter to caption with, the way 04_submit_test.sh takes
+# the checkpoint. It has to be set before serve_auto, because the server loads it.
+case "${1:-}" in
+  ""|-*) ;;
+  *) if [ "$MODE" = "mm" ]; then export CAPTION_LORA_MM="$1"; else export CAPTION_LORA="$1"; fi
+     shift ;;
 esac
 
 # --check only inspects the inputs, so it must not pull up a server
