@@ -213,8 +213,6 @@ python -m traffic_jepa.captioning_mm.preprocess --split train \
 python -m traffic_jepa.captioning_mm.train --out runs/caption_lora_mm
 ```
 
-Both take `--load_4bit` to run as QLoRA when VRAM is tight, and `--merge_val` to train on train+val.
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
