@@ -608,7 +608,7 @@ def build_runner(args):
             names = runner.models()
         except Exception as e:
             raise SystemExit(f"FATAL: no server at {args.server} ({e})\n"
-                             f"       start one first, see serving/README.md")
+                             f"       start one first: bash serving/start.sh")
         for n in {served, base}:
             if n not in names:
                 raise SystemExit(f"FATAL: the server does not serve {n!r}. It has: {names}")

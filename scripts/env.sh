@@ -32,8 +32,8 @@ export CAPTION_LORA="${TJ_CAPTION_LORA:-$TJ_ROOT/checkpoints/caption_lora}"
 export CAPTION_LORA_MM="${TJ_CAPTION_LORA_MM:-$TJ_ROOT/checkpoints/caption_lora_mm}"
 export CAPTION_MM="${TJ_CAPTION_MM:-$DATA/processed/caption_mm}"   # grounded variant: frames + manifests
 export CAPTION_MODEL="${CAPTION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
-# Set CAPTION_SERVER to a vLLM endpoint to caption through it instead of loading the model
-# in-process. Much faster, see serving/README.md. Empty means in-process.
+# Empty means the caption step serves the model itself. Set this to a vLLM endpoint that is
+# already up to caption through that one instead.
 export CAPTION_SERVER="${CAPTION_SERVER:-}"
 export CAPTION_WORKERS="${CAPTION_WORKERS:-8}"
 

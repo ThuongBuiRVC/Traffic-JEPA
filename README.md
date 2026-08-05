@@ -166,23 +166,16 @@ bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_m
 An interrupted run resumes from the `*_cache.jsonl` beside the output. Delete it to regenerate, or
 pass `--limit 5` for a quick test.
 
-The stage serves the model on port 8100 and stops the server when it finishes, so the segments go
-out concurrently. `CAPTION_WORKERS` sets how many are in flight, 8 by default.
-
-Captioning without a server takes hours instead of minutes, so install vLLM before running it:
+The step serves the model on port 8100 and stops the server when it finishes, which is what makes
+it take minutes instead of hours. Install vLLM first, otherwise it captions one segment at a time:
 
 ```bash
 pip install vllm
 ```
 
-To keep one server up across several runs, start it yourself and the stage will use it:
-
-```bash
-bash serving/start.sh                          # one server, all three modes
-export CAPTION_SERVER=http://localhost:8100/v1
-```
-
-See [serving/README.md](serving/README.md).
+`CAPTION_WORKERS` sets how many segments are in flight, 8 by default. To reuse one server across
+several runs, start it yourself with `bash serving/start.sh` and
+`export CAPTION_SERVER=http://localhost:8100/v1`.
 
 ## Training
 

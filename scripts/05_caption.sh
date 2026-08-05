@@ -8,7 +8,6 @@
 #
 # The step serves the model itself and stops the server when it is done. CAPTION_SERVER points it
 # at an endpoint that is already up, CAPTION_NO_SERVE=1 loads the model in-process instead.
-# See serving/README.md.
 export TJ_NEED_HF_TOKEN=0
 source "$(dirname "$0")/env.sh"
 source "$(dirname "$0")/serve_lib.sh"
