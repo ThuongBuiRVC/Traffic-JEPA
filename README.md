@@ -194,7 +194,7 @@ bash scripts/02_preprocess.sh      # V-JEPA latents + option vectors
 bash scripts/03_train.sh           # -> runs/traffic_jepa_world_model/model_latest.pt
 ```
 
-Seed 31, 16 epochs, ~45 min on one RTX 5060 Ti. No early stopping, so the last epoch is the model.
+Seed 31, 10 epochs, ~45 min on one RTX 5060 Ti. No early stopping, so the last epoch is the model.
 
 **2. Caption LoRA**
 
