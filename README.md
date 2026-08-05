@@ -52,7 +52,12 @@ Install CUDA 13.0 and `ffmpeg`, then:
 conda create -n traffic-jepa python=3.12 -y
 conda activate traffic-jepa
 pip install --extra-index-url https://download.pytorch.org/whl/cu130 -r requirements.txt
+bash scripts/setup_serving.sh    # the caption server, in its own virtualenv
 ```
+
+`setup_serving.sh` builds `.venv-serving/`, which holds vLLM and nothing else. vLLM pins
+`torch==2.11.0` while `requirements.txt` pins 2.12.0, so the two stay apart. Skip that line and the
+caption step builds it on the first run instead.
 
 V-JEPA 2.1, `google/embeddinggemma-300m` and `Qwen/Qwen3-VL-8B-Instruct` download on first use.
 
@@ -85,9 +90,8 @@ data/
 └── processed/                               # the pipeline writes here, leave it empty
 ```
 
-Nothing under `data/` ships with the repository, the tree is empty and you fill it in.
-`WTS_VQA_PUBLIC_TEST.json` is the SubTask2 question file from the challenge test data, the rest comes
-from the two sources above.
+The tree above ships empty and you fill it in. `WTS_VQA_PUBLIC_TEST.json` is the SubTask2 question
+file from the challenge test data. Everything else comes from the two sources above.
 
 SynWTS keeps a `train` and a `val` split, and step 01 reads both. Note that `bbox_annotated` puts the
 actor before the split, while the other two put the split first.
@@ -166,20 +170,9 @@ bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_m
 An interrupted run resumes from the `*_cache.jsonl` beside the output. Delete it to regenerate, or
 pass `--limit 5` for a quick test.
 
-The step serves the model on port 8100 and stops the server when it finishes, which is what makes
-it take minutes instead of hours. `CAPTION_WORKERS` sets how many segments are in flight, 8 by
-default.
-
-vLLM pins `torch==2.11.0`, so it gets its own virtualenv at `.venv-serving/` and the main
-environment keeps the pins above. The caption step builds it on the first run, or build it ahead of
-time:
-
-```bash
-bash scripts/setup_serving.sh
-```
-
-To reuse one server across several runs, start it yourself with `bash serving/start.sh` and
-`export CAPTION_SERVER=http://localhost:8100/v1`.
+The step serves the model on port 8100 and stops it when it finishes. `CAPTION_WORKERS` sets how
+many segments are in flight, 8 by default. To keep one server up across several runs, start it
+yourself with `bash serving/start.sh` and `export CAPTION_SERVER=http://localhost:8100/v1`.
 
 ## Training
 
@@ -220,7 +213,7 @@ python -m traffic_jepa.captioning_mm.preprocess --split train \
 python -m traffic_jepa.captioning_mm.train --out runs/caption_lora_mm
 ```
 
-`--load_4bit` runs either as QLoRA if VRAM is tight, and `--merge_val` trains on train+val.
+Both take `--load_4bit` to run as QLoRA when VRAM is tight, and `--merge_val` to train on train+val.
 
 ## License
 
