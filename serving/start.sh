@@ -9,17 +9,22 @@
 #   bash scripts/05_caption.sh
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
+TJ_ROOT="$here"
 PORT="${PORT:-8100}"
 MODEL="${CAPTION_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
 
-command -v vllm >/dev/null || { echo "ERROR: vllm not installed. pip install vllm"; exit 1; }
+# vllm lives in its own virtualenv, see scripts/setup_serving.sh
+source "$here/scripts/serve_lib.sh"
+VLLM="${VLLM_BIN:-$(vllm_bin || true)}"
+[ -n "$VLLM" ] || {
+  echo "ERROR: no vllm found. Build its environment: bash scripts/setup_serving.sh"; exit 1; }
 for a in caption_lora caption_lora_mm; do
   [ -f "$here/checkpoints/$a/adapter_config.json" ] || {
     echo "ERROR: $here/checkpoints/$a is missing. hf download ThuongBuiRVC/Traffic-JEPA --local-dir checkpoints/"
     exit 1; }
 done
 
-exec vllm serve "$MODEL" \
+exec "$VLLM" serve "$MODEL" \
   --served-model-name qwen3-vl-8b \
   --port "$PORT" \
   --api-key not-needed \

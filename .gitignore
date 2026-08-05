@@ -27,3 +27,6 @@ checkpoints/caption_lora/
 checkpoints/caption_lora_mm/
 # regenerated next to the checkpoint by scripts/04_submit_test.sh
 checkpoints/run_args.json
+
+# the caption server virtualenv, built by scripts/setup_serving.sh
+/.venv-serving/

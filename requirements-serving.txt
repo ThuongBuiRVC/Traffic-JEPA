@@ -1,0 +1,6 @@
+# The caption server only. It goes in its own virtualenv, never in the main one.
+#
+# vllm pins torch==2.11.0 and caps numpy below 2.4, both of which contradict requirements.txt.
+# That is fine: the server is a separate process reached over HTTP, so the two environments
+# never have to agree. scripts/setup_serving.sh builds this one at .venv-serving/.
+vllm==0.26.0

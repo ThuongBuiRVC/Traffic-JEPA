@@ -167,14 +167,18 @@ An interrupted run resumes from the `*_cache.jsonl` beside the output. Delete it
 pass `--limit 5` for a quick test.
 
 The step serves the model on port 8100 and stops the server when it finishes, which is what makes
-it take minutes instead of hours. Install vLLM first, otherwise it captions one segment at a time:
+it take minutes instead of hours. `CAPTION_WORKERS` sets how many segments are in flight, 8 by
+default.
+
+vLLM pins `torch==2.11.0`, so it gets its own virtualenv at `.venv-serving/` and the main
+environment keeps the pins above. The caption step builds it on the first run, or build it ahead of
+time:
 
 ```bash
-pip install vllm
+bash scripts/setup_serving.sh
 ```
 
-`CAPTION_WORKERS` sets how many segments are in flight, 8 by default. To reuse one server across
-several runs, start it yourself with `bash serving/start.sh` and
+To reuse one server across several runs, start it yourself with `bash serving/start.sh` and
 `export CAPTION_SERVER=http://localhost:8100/v1`.
 
 ## Training
