@@ -6,8 +6,8 @@
 #   bash scripts/05_caption.sh base         # lora without the adapter, a baseline
 #   bash scripts/05_caption.sh --check       # any flag works with or without a mode
 #
-#   bash scripts/05_caption.sh --lora runs/caption_lora/adapter        # a LoRA you trained
-#   bash scripts/05_caption.sh mm --lora runs/caption_lora_mm/adapter  # the same for mm
+#   bash scripts/05_caption.sh runs/caption_lora        # a LoRA you trained
+#   bash scripts/05_caption.sh mm runs/caption_lora_mm  # the mode comes first
 #
 # The step serves the model itself and stops the server when it is done. CAPTION_SERVER points it
 # at an endpoint that is already up, CAPTION_NO_SERVE=1 loads the model in-process instead.
