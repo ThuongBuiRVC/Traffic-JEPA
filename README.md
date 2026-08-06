@@ -156,9 +156,12 @@ bash scripts/05_caption.sh --check    # check the inputs, load nothing
 bash scripts/05_caption.sh            # lora -> submissions/caption_submission.json
 bash scripts/05_caption.sh mm         # mm   -> submissions/caption_submission_mm.json
 
-bash scripts/05_caption.sh runs/caption_lora           # a LoRA you trained
-bash scripts/05_caption.sh mm runs/caption_lora_mm     # the mode comes first
+bash scripts/05_caption.sh --lora runs/caption_lora/adapter
+bash scripts/05_caption.sh mm --lora runs/caption_lora_mm/adapter
 ```
+
+Without `--lora` the adapter comes from `checkpoints/`. The last two lines use one you trained
+instead, which the training step leaves under `runs/<name>/adapter`.
 
 | mode | how it captions |
 |---|---|
