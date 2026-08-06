@@ -19,13 +19,25 @@ case "${1:-}" in
   lora|base|mm) MODE="$1"; shift ;;
 esac
 
-# an argument that is not a flag is the adapter to caption with, the way 04_submit_test.sh takes
-# the checkpoint. It has to be set before serve_auto, because the server loads it.
+# The adapter to caption with, either as a leading directory the way 04_submit_test.sh takes the
+# checkpoint, or as --lora DIR. It has to be picked up here, because the server is what loads it.
+LORA_ARG=""
 case "${1:-}" in
   ""|-*) ;;
-  *) if [ "$MODE" = "mm" ]; then export CAPTION_LORA_MM="$1"; else export CAPTION_LORA="$1"; fi
-     shift ;;
+  *) LORA_ARG="$1"; shift ;;
 esac
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lora)   LORA_ARG="${2:-}"; shift 2 ;;
+    --lora=*) LORA_ARG="${1#--lora=}"; shift ;;
+    *)        ARGS+=("$1"); shift ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+if [ -n "$LORA_ARG" ]; then
+  if [ "$MODE" = "mm" ]; then export CAPTION_LORA_MM="$LORA_ARG"; else export CAPTION_LORA="$LORA_ARG"; fi
+fi
 
 # --check only inspects the inputs, so it must not pull up a server
 CHECK_ONLY=0
