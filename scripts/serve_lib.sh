@@ -67,7 +67,9 @@ serve_auto() {
 
   local bin log waited=0
   bin="$(vllm_bin)"
-  log="${TMPDIR:-/tmp}/traffic_jepa_vllm_$port.log"
+  # under runs/ rather than /tmp, so the log outlives a container that exits
+  mkdir -p "$TJ_ROOT/runs"
+  log="${TJ_LOG_DIR:-$TJ_ROOT/runs}/vllm_$port.log"
   echo "== starting the caption server on :$port, takes a few minutes to load =="
   echo "   log: $log"
   VLLM_BIN="$bin" PORT="$port" bash "$TJ_ROOT/serving/start.sh" >"$log" 2>&1 &
@@ -75,7 +77,12 @@ serve_auto() {
 
   until _serve_up "$port"; do
     kill -0 "$_SERVE_PID" 2>/dev/null || {
-      echo "ERROR: the caption server exited before it was ready. Last lines of $log:"
+      echo "ERROR: the caption server exited before it was ready. Full log: $log"
+      # vllm ends with a wrapper traceback saying "See root cause above", so pull the cause out
+      echo "--- what actually failed ---"
+      grep -aE "fatal error|No such file or directory|^[A-Za-z.]*(Error|Exception):" "$log" \
+        | head -n 5 || echo "(nothing matched, read the log)"
+      echo "--- last 25 lines ---"
       tail -n 25 "$log"
       _SERVE_PID=""
       exit 1; }

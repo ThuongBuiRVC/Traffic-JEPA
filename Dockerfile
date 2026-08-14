@@ -6,8 +6,10 @@
 FROM nvidia/cuda:13.0.0-cudnn-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
+# python3.12-dev is not optional: Triton compiles a C extension at run time and needs Python.h,
+# without it vLLM dies on `fatal error: Python.h: No such file or directory`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.12 python3-pip python3.12-venv git ffmpeg libgl1 libglib2.0-0 \
+        python3.12 python3-pip python3.12-venv python3.12-dev git ffmpeg libgl1 libglib2.0-0 \
         curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN ln -sf /usr/bin/python3.12 /usr/bin/python
