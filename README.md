@@ -120,7 +120,21 @@ either way.
 
 ### A. Docker
 
-Needs Docker with the NVIDIA runtime. Build the image once, about 30 minutes:
+Docker has to reach the GPU, which takes the NVIDIA container toolkit on the host. Install and wire
+it in once:
+
+```bash
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi   # must list your GPU
+```
+
+> **`could not select device driver "" with capabilities: [[gpu]]`** means that step was skipped.
+> Some images ship the apt repository without the package, so `daemon.json` names an `nvidia`
+> runtime whose binary is not there. The four lines above install it and point the daemon at it.
+
+Then build the image once, about 30 minutes:
 
 ```bash
 docker build -t traffic-jepa .
