@@ -31,135 +31,6 @@ Two stages. The second reads the output of the first.
 | VQA | frozen V-JEPA 2.1 → bidirectional predictor → graph/temporal decoder | `submissions/submission_final.json` |
 | Captioning | Qwen3-VL-8B + LoRA | `submissions/caption_submission.json` |
 
-## Reproduce (Docker)
-
-Everything below is self-contained in the Docker image — both Python environments, the pipeline,
-and the entrypoints. You need one NVIDIA GPU, Docker with the NVIDIA runtime, and an `HF_TOKEN`
-whose account has been granted access to the two gated repos in [Environment](#environment).
-
-**0. Get the token and the data.** Export the token and place the public test set under `data/`
-as shown in [Data Preparation](#data-preparation) (`data/test/...`). SynWTS is only needed for the
-full-retrain path.
-
-```bash
-export HF_TOKEN=hf_xxxxx
-```
-
-**1. Build the image** (CUDA base + both environments, ~30 min the first time):
-
-```bash
-docker build -t traffic-jepa .
-```
-
-**2. Define the run invocation once.** The named volumes cache the model downloads (V-JEPA,
-Llama, EmbeddingGemma, Qwen3-VL-8B — tens of GB) so they are fetched once and reused across runs;
-`--shm-size` is what vLLM and the dataloaders need:
-
-```bash
-RUN="docker run --gpus all --shm-size 16g -e HF_TOKEN=$HF_TOKEN \
-  -v $PWD/data:/workspace/Traffic-JEPA/data \
-  -v $PWD/submissions:/workspace/Traffic-JEPA/submissions \
-  -v $PWD/checkpoints:/workspace/Traffic-JEPA/checkpoints \
-  -v $PWD/runs:/workspace/Traffic-JEPA/runs \
-  -v tj-hf:/workspace/.cache/huggingface \
-  -v tj-torch:/workspace/.cache/torch"
-```
-
-### Path A — reproduce the submission from the released checkpoints
-
-The image pulls `model_best.pt` + the caption LoRAs from
-[ThuongBuiRVC/Traffic-JEPA](https://huggingface.co/ThuongBuiRVC/Traffic-JEPA) on first run
-(or reuses the mounted `checkpoints/`), answers the 4501 questions, and writes both submissions:
-
-```bash
-$RUN traffic-jepa inference
-# -> submissions/submission_final.json     (SubTask2 — VQA)
-# -> submissions/caption_submission.json   (SubTask1 — Caption)
-```
-
-Those two files are the deliverable. Other modes (`inference mm`, single stages, a shell) are in
-[All commands](#all-commands) below.
-
-### Path B — reproduce everything from scratch, including training
-
-Also place SynWTS under `data/synwts/` first (see [Data Preparation](#data-preparation)). Training
-is seed 31, simulation only, and touches no test data:
-
-```bash
-# 1) retrain the VQA predictor + caption LoRA -> runs/
-$RUN traffic-jepa train
-
-# 2) build the submissions from what you just trained
-$RUN -e CKPT=/workspace/Traffic-JEPA/runs/traffic_jepa_world_model/model_latest.pt \
-     -e CAPTION_LORA=/workspace/Traffic-JEPA/runs/caption_lora/adapter \
-     traffic-jepa inference
-```
-
-### All commands
-
-Every entrypoint, for reference:
-
-```bash
-$RUN traffic-jepa inference          # VQA + captions, lora (default, highest-scoring)
-$RUN traffic-jepa inference mm       # VQA + captions, the paper's grounded variant
-$RUN traffic-jepa inference base     # VQA + captions, no-adapter baseline
-$RUN traffic-jepa vqa                # SubTask2 only  -> submission_final.json
-$RUN traffic-jepa caption            # SubTask1 only (needs VQA output), lora
-$RUN traffic-jepa caption mm         # SubTask1, mm   -> caption_submission_mm.json
-$RUN traffic-jepa train              # retrain predictor + caption LoRA -> runs/
-$RUN -it traffic-jepa bash           # a shell, to run any script by hand
-```
-
-The `vllm` caption environment is baked into the image (`--build-arg BUILD_SERVING=0` skips it and
-lets the first caption run build it instead). Each entrypoint just calls the scripts documented
-bare-metal in [Inference](#inference) and [Training](#training).
-
-### Expected results
-
-On the public test set, the released checkpoints reproduce our leaderboard entry:
-
-| | S2 | BLEU-4 | METEOR | ROUGE-L | CIDEr | VQA Acc. (%) |
-|---|---:|---:|---:|---:|---:|---:|
-| Path A (released checkpoints) | 60.0853 | 0.2798 | 0.4624 | 0.4969 | 0.8396 | 87.0918 |
-
-The VQA answers are deterministic — `submission_final.json` is byte-for-byte reproducible on the
-same GPU. The captions come from Qwen3-VL sampling and move by less than a metric point run to
-run; a from-scratch retrain (Path B) lands within about ±0.2 on every column.
-
-### Hardware
-
-| | |
-|---|---|
-| GPU | 1× NVIDIA, ≥ 12 GB for VQA, **≥ 20 GB for captioning** (Qwen3-VL-8B) |
-| Disk | ~60 GB (image + model downloads + encoder cache) |
-| CUDA | 13.0 runtime (the image's base); host driver ≥ 580 |
-
-## Environment
-
-One NVIDIA GPU (≥ 12 GB for VQA, ≥ 20 GB for captioning) and a HuggingFace token with access to two
-gated repositories:
-
-- [`meta-llama/Llama-3.2-1B`](https://huggingface.co/meta-llama/Llama-3.2-1B) — the predictor
-- [`google/embeddinggemma-300m`](https://huggingface.co/google/embeddinggemma-300m) — the option vectors
-
-> Request access on both model pages first, using the same account the token belongs to. The
-> approval is per repository, so a valid token on its own still gets `403 Cannot access gated repo`.
-
-```bash
-export HF_TOKEN=hf_xxxxx
-```
-
-Install CUDA 13.0 and `ffmpeg`, then:
-
-```bash
-conda create -n traffic-jepa python=3.12 -y
-conda activate traffic-jepa
-pip install --extra-index-url https://download.pytorch.org/whl/cu130 -r requirements.txt
-bash scripts/setup_serving.sh    # the caption server, in its own virtualenv
-```
-
-V-JEPA 2.1, `google/embeddinggemma-300m` and `Qwen/Qwen3-VL-8B-Instruct` download on first use.
-
 ## Data Preparation
 
 Two sources. The public test set from the
@@ -214,6 +85,119 @@ checkpoints/
 ├── index_sim.jsonl        # the simulation tables the graph decoder is built from
 └── run_args.json          # the architecture model_best.pt was trained with
 ```
+
+## Requirements
+
+| | |
+|---|---|
+| GPU | 1× NVIDIA, ≥ 12 GB for VQA, **≥ 20 GB for captioning** (Qwen3-VL-8B) |
+| Disk | ~60 GB for the model downloads and the encoder cache |
+| CUDA | 13.0 runtime, host driver ≥ 580 |
+
+A HuggingFace token is needed either way, with access to two gated repositories:
+
+- [`meta-llama/Llama-3.2-1B`](https://huggingface.co/meta-llama/Llama-3.2-1B) — the predictor
+- [`google/embeddinggemma-300m`](https://huggingface.co/google/embeddinggemma-300m) — the option vectors
+
+> Request access on both model pages first, using the same account the token belongs to. The
+> approval is per repository, so a valid token on its own still gets `403 Cannot access gated repo`.
+
+```bash
+export HF_TOKEN=hf_xxxxx
+```
+
+## Setup
+
+Two ways to get there. Pick one.
+
+| | |
+|---|---|
+| [A. Docker](#a-docker) | one image holds both Python environments, nothing to install by hand |
+| [B. Install it yourself](#b-install-it-yourself) | conda plus pip, then run the scripts directly |
+
+V-JEPA 2.1, `google/embeddinggemma-300m` and `Qwen/Qwen3-VL-8B-Instruct` download on first use
+either way.
+
+### A. Docker
+
+Needs Docker with the NVIDIA runtime. Build the image once, about 30 minutes:
+
+```bash
+docker build -t traffic-jepa .
+```
+
+Define the run invocation once. The named volumes keep the model downloads across runs, and
+`--shm-size` is what vLLM and the dataloaders need:
+
+```bash
+RUN="docker run --gpus all --shm-size 16g -e HF_TOKEN=$HF_TOKEN \
+  -v $PWD/data:/workspace/Traffic-JEPA/data \
+  -v $PWD/submissions:/workspace/Traffic-JEPA/submissions \
+  -v $PWD/checkpoints:/workspace/Traffic-JEPA/checkpoints \
+  -v $PWD/runs:/workspace/Traffic-JEPA/runs \
+  -v tj-hf:/workspace/.cache/huggingface \
+  -v tj-torch:/workspace/.cache/torch"
+```
+
+Then the submission is one command:
+
+```bash
+$RUN traffic-jepa inference
+# -> submissions/submission_final.json     (SubTask2 — VQA)
+# -> submissions/caption_submission.json   (SubTask1 — Caption)
+```
+
+Every entrypoint:
+
+```bash
+$RUN traffic-jepa inference          # VQA + captions, lora (default, highest-scoring)
+$RUN traffic-jepa inference mm       # VQA + captions, the paper's grounded variant
+$RUN traffic-jepa inference base     # VQA + captions, no-adapter baseline
+$RUN traffic-jepa vqa                # SubTask2 only  -> submission_final.json
+$RUN traffic-jepa caption            # SubTask1 only (needs VQA output), lora
+$RUN traffic-jepa caption mm         # SubTask1, mm   -> caption_submission_mm.json
+$RUN traffic-jepa train              # retrain predictor + caption LoRA -> runs/
+$RUN -it traffic-jepa bash           # a shell, to run any script by hand
+```
+
+To retrain and then submit what you trained:
+
+```bash
+$RUN traffic-jepa train
+$RUN -e CKPT=/workspace/Traffic-JEPA/runs/traffic_jepa_world_model/model_latest.pt \
+     -e CAPTION_LORA=/workspace/Traffic-JEPA/runs/caption_lora/adapter \
+     traffic-jepa inference
+```
+
+The `vllm` caption environment is baked into the image. `--build-arg BUILD_SERVING=0` skips it and
+lets the first caption run build it instead. Each entrypoint calls the same scripts as
+[Inference](#inference) and [Training](#training) below.
+
+### B. Install it yourself
+
+Install CUDA 13.0 and `ffmpeg`, then:
+
+```bash
+conda create -n traffic-jepa python=3.12 -y
+conda activate traffic-jepa
+pip install --extra-index-url https://download.pytorch.org/whl/cu130 -r requirements.txt
+bash scripts/setup_serving.sh    # the caption server, in its own virtualenv
+```
+
+From here on the scripts run directly, as documented in [Inference](#inference) and
+[Training](#training).
+
+### Expected results
+
+On the public test set, the released checkpoints reproduce our leaderboard entry:
+
+| | S2 | BLEU-4 | METEOR | ROUGE-L | CIDEr | VQA Acc. (%) |
+|---|---:|---:|---:|---:|---:|---:|
+| released checkpoints | 60.0853 | 0.2798 | 0.4624 | 0.4969 | 0.8396 | 87.0918 |
+
+The VQA answers are deterministic, so `submission_final.json` is byte-for-byte reproducible on the
+same GPU. The captions come from Qwen3-VL sampling and move by less than a metric point run to run.
+A from-scratch retrain lands within about ±0.2 on every column.
 
 ## Inference
 
