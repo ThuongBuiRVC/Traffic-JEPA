@@ -1,0 +1,17 @@
+# build context: code only. Data is mounted, checkpoints download from the Hub,
+# and the two virtualenvs are built inside the image / at runtime.
+.git/
+data/
+runs/
+clean_run/
+submissions/
+checkpoints/*.pt
+checkpoints/caption_lora/
+checkpoints/caption_lora_mm/
+.venv/
+.venv-serving/
+**/__pycache__/
+*.pyc
+*.egg-info/
+.DS_Store
+*.swp

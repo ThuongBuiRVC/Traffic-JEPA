@@ -57,6 +57,28 @@ bash scripts/setup_serving.sh    # the caption server, in its own virtualenv
 
 V-JEPA 2.1, `google/embeddinggemma-300m` and `Qwen/Qwen3-VL-8B-Instruct` download on first use.
 
+### Docker
+
+One image holds both environments — the main one (`torch 2.12.0+cu130`, VQA) and the caption
+server's own `vllm` virtualenv. CUDA 13.0 base.
+
+```bash
+docker build -t traffic-jepa .
+
+# VQA + captions in one go -> submissions/ (checkpoints download from the Hub on first run)
+docker run --gpus all -e HF_TOKEN=hf_xxx \
+  -v $PWD/data:/workspace/Traffic-JEPA/data \
+  -v $PWD/submissions:/workspace/Traffic-JEPA/submissions \
+  traffic-jepa inference
+
+# other entrypoints: `vqa` (SubTask2 only), `caption` (SubTask1, needs VQA output), `train`
+```
+
+Mount `-v $PWD/checkpoints:/workspace/Traffic-JEPA/checkpoints` to reuse a local
+`hf download ThuongBuiRVC/Traffic-JEPA` instead of pulling inside the container. The caption
+server's `vllm` env is baked into the image; `--build-arg BUILD_SERVING=0` skips it and lets the
+first caption run build it instead.
+
 ## Data Preparation
 
 Two sources. The public test set from the
