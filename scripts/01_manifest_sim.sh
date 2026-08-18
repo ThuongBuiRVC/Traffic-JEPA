@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # cut 16-frame clips + bbox_json + sim manifests from raw SynWTS.  (~30 min, CPU)
+# Input:  $SYNWTS/{annotations,videos}
+# Output: $SIMQA, including one review manifest for each simulation split
 source "$(dirname "$0")/env.sh"
 for sp in train val; do
   echo "== build sim manifest: $sp =="

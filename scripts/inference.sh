@@ -7,6 +7,8 @@
 #
 # The caption step serves Qwen3-VL itself and stops the server when it is done, so this is one
 # command. CKPT overrides the VQA checkpoint, CAPTION_LORA / CAPTION_LORA_MM the caption adapters.
+# Stage ordering is intentional: caption generation reads the decoded VQA answers produced by
+# 04_submit_test.sh, so the two stages must not run concurrently.
 set -euo pipefail
 here="$(dirname "$0")"
 source "$here/env.sh"

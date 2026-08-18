@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Train the answer predictor from the frozen features prepared by 02_preprocess.sh.
+# The explicit arguments below are the reproduction recipe; additional CLI arguments are
+# forwarded unchanged so short probes and alternate output directories remain possible.
 
 source "$(dirname "$0")/env.sh"
 $PY -m traffic_jepa.training.train \

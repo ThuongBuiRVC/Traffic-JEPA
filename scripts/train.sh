@@ -6,6 +6,8 @@
 #
 # Writes checkpoints only. Build the submissions afterwards with scripts/inference.sh, which the
 # last line prints ready to paste.
+# Each numbered helper remains runnable on its own; this wrapper only preserves their required
+# order and selects the caption-training mode.
 set -euo pipefail
 here="$(dirname "$0")"
 source "$here/env.sh"

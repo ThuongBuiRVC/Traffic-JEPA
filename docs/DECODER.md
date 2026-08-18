@@ -99,3 +99,23 @@ bounds the relation term. The run values live in `DECODE_ARGS` in `scripts/env.s
 
 The real-val numbers above were measured with the labeled-split evaluation, which is not part of
 this release — the shipped pipeline only produces the public-test submission.
+
+## Runtime inputs and outputs
+
+The public-test wrapper is `traffic_jepa.postprocess.decode_test`. It reads the scored JSONL written
+by `traffic_jepa.inference.predict`, rebuilds the matching test rows, and estimates its tables from
+the simulation index. The normal entrypoint supplies these paths automatically:
+
+```bash
+bash scripts/04_submit_test.sh
+```
+
+The decoder writes two artifacts:
+
+- `submissions/submission_final.json` contains only the answer ID and selected option letter. This
+  is the SubTask2 submission and the input to caption generation.
+- `submissions/submission_final_decoded.jsonl` retains questions, options, model predictions,
+  decoded predictions, and a `changed` flag for inspection.
+
+All decoder hyperparameters used by the standard command are defined together in `DECODE_ARGS` in
+`scripts/env.sh`. This keeps direct invocations and the end-to-end submission path aligned.

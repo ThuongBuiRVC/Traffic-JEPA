@@ -31,6 +31,10 @@ Two stages. The second reads the output of the first.
 | VQA | frozen V-JEPA 2.1 → bidirectional predictor → graph/temporal decoder | `submissions/submission_final.json` |
 | Captioning | Qwen3-VL-8B + LoRA | `submissions/caption_submission.json` |
 
+For a code-oriented map of the modules, data flow, and generated artifacts, see the
+[repository guide](docs/REPOSITORY_GUIDE.md). The graph decoder has a separate
+[design note](docs/DECODER.md).
+
 ## Data Preparation
 
 Two sources. The public test set from the
@@ -296,6 +300,7 @@ bash scripts/03_train.sh           # -> runs/traffic_jepa_world_model/model_late
 ```
 
 Seed 31, 10 epochs, ~45 min on one RTX 5060 Ti. No early stopping, so the last epoch is the model.
+The reproduction command and its explicit overrides live in `scripts/03_train.sh`.
 
 **2. Caption LoRA**
 

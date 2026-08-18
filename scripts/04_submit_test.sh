@@ -4,6 +4,9 @@
 #
 #   bash scripts/04_submit_test.sh                             # the released checkpoints/model_best.pt
 #   bash scripts/04_submit_test.sh runs/<run>/model_latest.pt  # one you trained
+#
+# Intermediate artifacts are kept beside the final submission for reproducibility and debugging:
+# submission_raw.json, submission_raw_scored.jsonl, and submission_final_decoded.jsonl.
 source "$(dirname "$0")/env.sh"
 
 CKPT="${1:-$TJ_ROOT/checkpoints/model_best.pt}"
